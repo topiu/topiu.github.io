@@ -22,11 +22,18 @@
     overscroll-behavior: none; -webkit-text-size-adjust: 100%;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
   }
-  body { touch-action: manipulation; }
+  /* pan-x pan-y allows scrolling but withholds pinch-zoom, so the browser never
+     zooms the page underneath the planner's own pinch handling.
+     ("manipulation" would be pan-x pan-y PLUS pinch-zoom — not what we want.) */
+  html, body { touch-action: pan-x pan-y; }
   #root {
     position: fixed; inset: 0; box-sizing: border-box;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   }
+  /* a long press must not raise a selection or callout UI: that steals the
+     gesture and the app never sees the matching pointerup */
+  input, textarea { -webkit-user-select: text; user-select: text; }
   #boot {
     position: absolute; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 10px; text-align: center; padding: 24px;
@@ -345,6 +352,20 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
 
 </script>
 <script>
+/* Block the browser's own zoom gestures. touch-action covers the standard path;
+   Safari's legacy gesture* events need explicit handling, and preventing
+   multi-touch touchmove catches anything left over on older WebViews. */
+(function () {
+  for (const ev of ["gesturestart", "gesturechange", "gestureend"]) {
+    document.addEventListener(ev, function (e) { e.preventDefault(); }, { passive: false });
+  }
+  document.addEventListener("touchmove", function (e) {
+    if (e.touches && e.touches.length > 1) e.preventDefault();
+  }, { passive: false });
+  document.addEventListener("dblclick", function (e) { e.preventDefault(); }, { passive: false });
+})();
+</script>
+<script>
 /* Mökkipohja — cabin interior planner. Single file, works offline.
    Plans are stored in this browser under the "mokkipohja:" localStorage prefix.
    Use Plan -> Save backup to keep a copy you can move between devices. */
@@ -385,6 +406,7 @@ const C = {
 const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace';
 const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif';
 const D2R = Math.PI / 180;
+const TAP_SLOP = 12; // px a finger may drift and still count as a tap
 const uid = () => Math.random().toString(36).slice(2, 10);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const fmt = mm => mm == null ? "–" : Math.abs(mm) >= 1000 ? (mm / 1000).toFixed(2) + " m" : Math.round(mm) + " mm";
@@ -2694,15 +2716,25 @@ function CabinPlanner() {
 
   /* ---- pointer handling ---- */
   const onDown = e => {
-    e.currentTarget.setPointerCapture?.(e.pointerId);
     const p = local(e);
-    ptrs.current.set(e.pointerId, p);
+    const now = Date.now();
+    /* Drop pointers we never saw released — a lost pointerup (OS gesture, long-press
+       menu, page switch) would otherwise leave a phantom finger down and make the
+       next single-finger drag look like a pinch. */
+    if (ptrs.current.size) {
+      for (const [id, q] of [...ptrs.current]) if (now - q.t > 4000) ptrs.current.delete(id);
+    }
+    ptrs.current.set(e.pointerId, {
+      x: p.x,
+      y: p.y,
+      t: now
+    });
     if (ptrs.current.size === 2) {
       const [a, b] = [...ptrs.current.values()];
       if (gest.current?.type === "drag" && gest.current.snapshot) setDoc(gest.current.snapshot);
       gest.current = {
         type: "pinch",
-        d0: Math.hypot(a.x - b.x, a.y - b.y),
+        d0: Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1),
         m0: {
           x: (a.x + b.x) / 2,
           y: (a.y + b.y) / 2
@@ -2713,6 +2745,52 @@ function CabinPlanner() {
     }
     if (ptrs.current.size > 2) return;
     const wp = toWorld(p.x, p.y);
+
+    /* Placing drops the piece straight away and keeps hold of it, so the same
+       press can slide it into position. */
+    if (mode === "place" && placingDef && defs[placingDef]) {
+      const def = defs[placingDef];
+      const raw = {
+        id: uid(),
+        defId: placingDef,
+        x: wp.x,
+        y: wp.y,
+        rot: 0
+      };
+      const sn = snapItemPos(raw, def, doc, defs, grid, 14 / vp.s);
+      const item = {
+        ...raw,
+        x: sn.x,
+        y: sn.y
+      };
+      commit(prev => ({
+        ...prev,
+        items: [...prev.items, item]
+      }));
+      setSel({
+        kind: "item",
+        id: item.id
+      });
+      setMode("select");
+      setPlacingDef(null);
+      setGhost(null);
+      gest.current = {
+        type: "drag",
+        target: {
+          kind: "item",
+          id: item.id
+        },
+        grab: {
+          x: 0,
+          y: 0
+        },
+        snapshot: null,
+        start: p,
+        t: now,
+        maxD: 0
+      };
+      return;
+    }
     if (mode === "select") {
       if (selItem && defs[selItem.defId]) {
         const hp = handleWorld(selItem, defs[selItem.defId]);
@@ -2723,7 +2801,7 @@ function CabinPlanner() {
             snapshot: doc,
             start: p,
             t: Date.now(),
-            moved: false
+            maxD: 0
           };
           return;
         }
@@ -2742,7 +2820,7 @@ function CabinPlanner() {
           snapshot: doc,
           start: p,
           t: Date.now(),
-          moved: false
+          maxD: 0
         };
         return;
       }
@@ -2761,7 +2839,7 @@ function CabinPlanner() {
             snapshot: doc,
             start: p,
             t: Date.now(),
-            moved: false
+            maxD: 0
           };
         } else {
           gest.current = {
@@ -2771,7 +2849,7 @@ function CabinPlanner() {
             snapshot: doc,
             start: p,
             t: Date.now(),
-            moved: false
+            maxD: 0
           };
         }
         return;
@@ -2784,7 +2862,7 @@ function CabinPlanner() {
           snapshot: doc,
           start: p,
           t: Date.now(),
-          moved: false
+          maxD: 0
         };
         return;
       }
@@ -2804,7 +2882,7 @@ function CabinPlanner() {
             snapshot: doc,
             start: p,
             t: Date.now(),
-            moved: false
+            maxD: 0
           };
           return;
         }
@@ -2815,7 +2893,7 @@ function CabinPlanner() {
         start: p,
         vp0: vp,
         t: Date.now(),
-        moved: false
+        maxD: 0
       };
       return;
     }
@@ -2824,20 +2902,25 @@ function CabinPlanner() {
       start: p,
       vp0: vp,
       t: Date.now(),
-      moved: false
+      maxD: 0
     };
     setGhost(wp);
   };
   const onMove = e => {
     if (!ptrs.current.has(e.pointerId)) {
-      if (mode !== "select" && draft) {
+      // hover preview (mouse only) — ignore movement outside the drawing surface
+      if (mode !== "select" && draft && wrapRef.current && wrapRef.current.contains(e.target)) {
         const p = local(e);
         setGhost(snapPoint(toWorld(p.x, p.y), doc, grid, 16 / vp.s, draft[draft.length - 1]));
       }
       return;
     }
     const p = local(e);
-    ptrs.current.set(e.pointerId, p);
+    ptrs.current.set(e.pointerId, {
+      x: p.x,
+      y: p.y,
+      t: Date.now()
+    });
     const g = gest.current;
     if (!g) return;
     if (g.type === "pinch" && ptrs.current.size >= 2) {
@@ -2847,7 +2930,7 @@ function CabinPlanner() {
         x: (a.x + b.x) / 2,
         y: (a.y + b.y) / 2
       };
-      const s2 = clamp(g.vp0.s * (d1 / (g.d0 || 1)), 0.004, 2);
+      const s2 = clamp(g.vp0.s * (d1 / g.d0), 0.004, 2);
       setVp({
         s: s2,
         ox: m1.x - (g.m0.x - g.vp0.ox) * (s2 / g.vp0.s),
@@ -2855,7 +2938,13 @@ function CabinPlanner() {
       });
       return;
     }
-    if (g.start && Math.hypot(p.x - g.start.x, p.y - g.start.y) > 7) g.moved = true;
+    /* furthest distance travelled, not a one-way flag: a tap that wobbles and
+       settles back still reads as a tap */
+    if (g.start) {
+      const d = Math.hypot(p.x - g.start.x, p.y - g.start.y);
+      if (d > (g.maxD || 0)) g.maxD = d;
+    }
+    const moved = (g.maxD || 0) > TAP_SLOP;
     if (g.type === "pan") {
       setVp({
         s: g.vp0.s,
@@ -2866,7 +2955,7 @@ function CabinPlanner() {
     }
     if (g.type === "tool") {
       // a drag pans even while a drawing tool is active; a tap places a point
-      if (g.moved) setVp({
+      if (moved) setVp({
         s: g.vp0.s,
         ox: g.vp0.ox + (p.x - g.start.x),
         oy: g.vp0.oy + (p.y - g.start.y)
@@ -2972,8 +3061,13 @@ function CabinPlanner() {
     }
   };
   const onUp = e => {
-    ptrs.current.delete(e.pointerId);
+    const tracked = ptrs.current.delete(e.pointerId);
     const g = gest.current;
+    if (!tracked) {
+      // released something that didn't start on the canvas (a button, a sheet)
+      if (!ptrs.current.size && g) gest.current = null;
+      return;
+    }
     if (ptrs.current.size >= 1) {
       if (g?.type === "pinch") {
         const [a] = [...ptrs.current.values()];
@@ -2982,15 +3076,15 @@ function CabinPlanner() {
           start: a,
           vp0: vp,
           t: Date.now(),
-          moved: true
+          maxD: 999
         };
       }
       return;
     }
     gest.current = null;
     if (!g) return;
-    if ((g.type === "drag" || g.type === "rotate") && g.moved && g.snapshot) push(g.snapshot);
-    const isTap = !g.moved && Date.now() - g.t < 500;
+    if ((g.type === "drag" || g.type === "rotate") && (g.maxD || 0) > 2 && g.snapshot) push(g.snapshot);
+    const isTap = (g.maxD || 0) <= TAP_SLOP && Date.now() - g.t < 900;
     if ((g.type === "tool" || g.type === "pan") && isTap) {
       const p = local(e);
       const wp = toWorld(p.x, p.y);
@@ -3154,6 +3248,69 @@ function CabinPlanner() {
     setDraft(null);
     setGhost(null);
   };
+
+  /* Move and release are handled on `window`, not on the canvas element. If the
+     browser steals a gesture (long-press menu, OS edge swipe, app switch) the
+     element may never see pointerup; window still does, and the blur /
+     visibilitychange handlers sweep up anything that slips through. */
+  const moveRef = useRef(null),
+    upRef = useRef(null);
+  moveRef.current = onMove;
+  upRef.current = onUp;
+  useEffect(() => {
+    const m = e => moveRef.current && moveRef.current(e);
+    const u = e => upRef.current && upRef.current(e);
+    const clear = () => {
+      ptrs.current.clear();
+      gest.current = null;
+    };
+    window.addEventListener("pointermove", m, {
+      passive: false
+    });
+    window.addEventListener("pointerup", u);
+    window.addEventListener("pointercancel", u);
+    window.addEventListener("blur", clear);
+    document.addEventListener("visibilitychange", clear);
+    return () => {
+      window.removeEventListener("pointermove", m);
+      window.removeEventListener("pointerup", u);
+      window.removeEventListener("pointercancel", u);
+      window.removeEventListener("blur", clear);
+      document.removeEventListener("visibilitychange", clear);
+    };
+  }, []);
+  const vpRef = useRef(vp);
+  vpRef.current = vp;
+
+  /* touchstart carries an authoritative list of fingers actually on the glass.
+     pointerdown fires just before it, so if our map has more pointers than the
+     hardware reports, the extras are phantoms from a lost pointerup — drop them
+     and demote a pinch that shouldn't have started. */
+  useEffect(() => {
+    const reconcile = e => {
+      const live = e.touches ? e.touches.length : 0;
+      if (!live || ptrs.current.size <= live) return;
+      const keep = new Set([...ptrs.current.entries()].sort((a, b) => b[1].t - a[1].t).slice(0, live).map(([id]) => id));
+      for (const [id] of [...ptrs.current]) if (!keep.has(id)) ptrs.current.delete(id);
+      if (ptrs.current.size < 2 && gest.current?.type === "pinch") {
+        const [a] = [...ptrs.current.values()];
+        gest.current = a ? {
+          type: "pan",
+          start: {
+            x: a.x,
+            y: a.y
+          },
+          vp0: vpRef.current,
+          t: Date.now(),
+          maxD: 999
+        } : null;
+      }
+    };
+    window.addEventListener("touchstart", reconcile, {
+      passive: true
+    });
+    return () => window.removeEventListener("touchstart", reconcile);
+  }, []);
   const onWheel = e => {
     if (e.cancelable) e.preventDefault();
     const p = local(e);
@@ -3545,9 +3702,6 @@ function CabinPlanner() {
   })), /*#__PURE__*/React.createElement("div", {
     ref: wrapRef,
     onPointerDown: onDown,
-    onPointerMove: onMove,
-    onPointerUp: onUp,
-    onPointerCancel: onUp,
     onWheel: onWheel,
     style: {
       position: "relative",
