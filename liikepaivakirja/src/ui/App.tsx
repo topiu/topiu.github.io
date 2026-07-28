@@ -8,6 +8,7 @@ import { EditView } from "./Edit";
 import { HistoryView } from "./History";
 import { ExportModal, ImportModal, StepsModal } from "./Modals";
 import { ReportModal } from "./Report";
+import { OfflineNote, UpdateBanner } from "./Update";
 import { TodayView } from "./Today";
 import { Style } from "./common";
 
@@ -90,6 +91,7 @@ export default function App() {
       logs: stateRef.current.logs || {},
       marks: stateRef.current.marks || [],
       psfs: stateRef.current.psfs || emptyPsfs(),
+      questions: stateRef.current.questions || "",
     };
     undoRef.current = prev;
     setCanUndoImport(true);
@@ -99,6 +101,7 @@ export default function App() {
     setLogs(res.logs);
     setMarks(res.marks || []);
     setPsfs(res.psfs || emptyPsfs());
+    if (typeof res.questions === "string") setQuestions(res.questions);
     setSelected(startOfToday());
 
     /* write sequentially so the four keys don't race the rate limiter,
@@ -108,6 +111,7 @@ export default function App() {
     await saveJSONNow("physio-logs", res.logs);
     await saveJSONNow("physio-marks", res.marks || []);
     await saveJSONNow("physio-psfs", res.psfs || emptyPsfs());
+    if (typeof res.questions === "string") await saveJSONNow("physio-questions", res.questions);
   }, []);
 
   const undoImport = useCallback(async () => {
@@ -118,11 +122,13 @@ export default function App() {
     setLogs(prev.logs || {});
     setMarks(prev.marks || []);
     setPsfs(prev.psfs || emptyPsfs());
+    setQuestions(prev.questions || "");
     setSelected(startOfToday());
     await saveJSONNow("physio-config", { exercises: prev.exercises || [], symptoms: prev.symptoms || [] });
     await saveJSONNow("physio-logs", prev.logs || {});
     await saveJSONNow("physio-marks", prev.marks || []);
     await saveJSONNow("physio-psfs", prev.psfs || emptyPsfs());
+    await saveJSONNow("physio-questions", prev.questions || "");
     undoRef.current = null;
     setCanUndoImport(false);
     try {
@@ -511,7 +517,10 @@ export default function App() {
           ))}
         </div>
 
-        {tab === "today" && <BackupBanner exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} />}
+        {tab === "today" && <UpdateBanner />}
+        {tab === "today" && (
+          <BackupBanner exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} questions={questions} />
+        )}
 
         {tab === "today" && (
           <TodayView
@@ -588,17 +597,30 @@ export default function App() {
           />
         )}
 
-        {tab === "edit" && <BackupSettings exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} />}
+        {tab === "edit" && (
+          <BackupSettings
+            exercises={exercises}
+            symptoms={symptoms}
+            logs={logs}
+            marks={marks}
+            psfs={psfs}
+            questions={questions}
+            onRestore={applyImport}
+            onUndo={undoImport}
+            canUndo={canUndoImport}
+          />
+        )}
 
         {hasStore && (
           <p style={{ marginTop: 26, textAlign: "center", fontSize: 12, color: C.inkFaint }}>
             Merkinnät tallentuvat automaattisesti. Vie tiedot Historia-välilehdeltä varmuuskopioksi.
           </p>
         )}
+        <OfflineNote />
       </div>
 
       {exportOpen && (
-        <ExportModal exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} onClose={() => setExportOpen(false)} />
+        <ExportModal exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} questions={questions} onClose={() => setExportOpen(false)} />
       )}
       {reportOpen && (
         <ReportModal

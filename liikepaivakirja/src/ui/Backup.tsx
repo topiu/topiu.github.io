@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Upload, Check, X } from "lucide-react";
+import { RestorePanel } from "./Restore";
 import { C } from "../styles/tokens";
 import { keyOf, startOfToday, buildJSON } from "../domain";
 import {
@@ -27,7 +28,7 @@ import { download } from "../platform/download";
 
 type Status = { kind: "idle" | "busy" | "ok" | "warn" | "error"; text?: string };
 
-function useRunBackup({ exercises, symptoms, logs, marks, psfs }) {
+function useRunBackup({ exercises, symptoms, logs, marks, psfs, questions }) {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const timer = useRef<any>(null);
 
@@ -55,7 +56,7 @@ function useRunBackup({ exercises, symptoms, logs, marks, psfs }) {
     if (!handle) return false;
     if ((await folderPermission(handle)) !== "granted") return false;
 
-    const text = buildJSON(exercises, symptoms, logs, marks, psfs);
+    const text = buildJSON(exercises, symptoms, logs, marks, psfs, questions);
     const res = await writeBackupToFolder(handle, backupName(todayKey), text);
     if (!res.ok) return false;
     void pruneFolder(handle, todayKey, BACKUP_KEEP_DAYS);
@@ -66,14 +67,14 @@ function useRunBackup({ exercises, symptoms, logs, marks, psfs }) {
       hasFolder: true,
     });
     return true;
-  }, [exercises, symptoms, logs, marks, psfs]);
+  }, [exercises, symptoms, logs, marks, psfs, questions]);
 
   /* Interactive path — must be called from a user gesture. */
   const run = useCallback(
     async (opts: { preferred?: "download" | "share" } = {}) => {
       const todayKey = keyOf(startOfToday());
       const filename = backupName(todayKey);
-      const text = buildJSON(exercises, symptoms, logs, marks, psfs);
+      const text = buildJSON(exercises, symptoms, logs, marks, psfs, questions);
       flash({ kind: "busy", text: "Tallennetaan…" });
 
       /* 1. a folder, if we have one and can get permission now */
@@ -122,7 +123,7 @@ function useRunBackup({ exercises, symptoms, logs, marks, psfs }) {
         return false;
       }
     },
-    [exercises, symptoms, logs, marks, psfs, flash]
+    [exercises, symptoms, logs, marks, psfs, questions, flash]
   );
 
   return { status, run, runSilent };
@@ -139,9 +140,9 @@ function statusColor(kind: Status["kind"]) {
 /*  Banner (Tänään)                                                    */
 /* ------------------------------------------------------------------ */
 
-export function BackupBanner({ exercises, symptoms, logs, marks, psfs }) {
+export function BackupBanner({ exercises, symptoms, logs, marks, psfs, questions }) {
   const state = useBackupState();
-  const { status, run, runSilent } = useRunBackup({ exercises, symptoms, logs, marks, psfs });
+  const { status, run, runSilent } = useRunBackup({ exercises, symptoms, logs, marks, psfs, questions });
   const todayKey = keyOf(startOfToday());
   const tried = useRef(false);
 
@@ -277,9 +278,9 @@ function TextBtn({ children, onClick, disabled, tone }: any) {
   );
 }
 
-export function BackupSettings({ exercises, symptoms, logs, marks, psfs }) {
+export function BackupSettings({ exercises, symptoms, logs, marks, psfs, questions, onRestore, onUndo, canUndo }) {
   const state = useBackupState();
-  const { status, run } = useRunBackup({ exercises, symptoms, logs, marks, psfs });
+  const { status, run } = useRunBackup({ exercises, symptoms, logs, marks, psfs, questions });
   const todayKey = keyOf(startOfToday());
   const [folderName, setFolderName] = useState<string | null>(null);
   const canPick = hasDirectoryPicker();
@@ -400,6 +401,18 @@ export function BackupSettings({ exercises, symptoms, logs, marks, psfs }) {
           Lataukset. Se voi olla myös iCloud Drive tai muu kansio, esimerkiksi synkronoitu kansio.
         </p>
       </div>
+
+      <RestorePanel
+        exercises={exercises}
+        symptoms={symptoms}
+        logs={logs}
+        marks={marks}
+        psfs={psfs}
+        questions={questions}
+        onRestore={onRestore}
+        onUndo={onUndo}
+        canUndo={canUndo}
+      />
     </>
   );
 }

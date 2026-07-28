@@ -190,6 +190,8 @@ export function parseImport(text) {
   const marks = normalizeMarks(data.marks);
   /* absent in v7 and earlier files; an empty PSFS is the correct reading */
   const psfs = normalizePsfs(data.psfs);
+  /* absent before v9 */
+  const questions = typeof data.questions === "string" ? data.questions : "";
   return {
     ok: true,
     ex,
@@ -197,6 +199,7 @@ export function parseImport(text) {
     logs,
     marks,
     psfs,
+    questions,
     counts: {
       ex: ex.length,
       sy: sy.length,

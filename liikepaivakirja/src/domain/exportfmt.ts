@@ -77,20 +77,23 @@ export function buildCSV(exercises, symptoms, logs, marks, psfs) {
   return "\uFEFF" + lines.map((r) => r.map(esc).join(SEP)).join("\r\n");
 }
 
-/* version 8 adds `psfs`. A v7 file imports cleanly — parseImport normalizes a
-   missing key to an empty PSFS — and a v8 file read by an older build simply
-   ignores the field, so both directions stay safe. */
-export function buildJSON(exercises, symptoms, logs, marks, psfs) {
+/* version 8 added `psfs`, version 9 adds `questions`. Older files import cleanly
+   — parseImport normalizes a missing key to an empty value — and a newer file
+   read by an older build simply ignores the extra field, so both directions stay
+   safe. The rule that produced version 9: every key in DATA_KEYS must appear
+   here, or a restore from file silently drops it. */
+export function buildJSON(exercises, symptoms, logs, marks, psfs, questions?) {
   return JSON.stringify(
     {
       app: "Liikepäiväkirja",
       exportedAt: new Date().toISOString(),
-      version: 8,
+      version: 9,
       exercises,
       symptoms,
       logs,
       marks: marks || [],
       psfs: psfs || { activities: [], entries: {} },
+      questions: typeof questions === "string" ? questions : "",
     },
     null,
     2

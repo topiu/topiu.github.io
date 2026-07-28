@@ -11,6 +11,7 @@ export * from "./psfs";
 export * from "./regions";
 export * from "./report";
 export * from "./reportview";
+export * from "./restore";
 export * from "./steps";
 export * from "./structures";
 export * from "./taxonomy";

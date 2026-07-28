@@ -9,14 +9,14 @@ import { IconBtn } from "./common";
 /* ================================================================== */
 /*  EXPORT MODAL                                                       */
 /* ================================================================== */
-export function ExportModal({ exercises, symptoms, logs, marks, psfs, onClose }) {
+export function ExportModal({ exercises, symptoms, logs, marks, psfs, questions, onClose }) {
   const [fmt, setFmt] = useState("csv");
   const [msg, setMsg] = useState("");
   const taRef = useRef(null);
   const count = Object.keys(logs).length;
   const text = useMemo(
-    () => (fmt === "csv" ? buildCSV(exercises, symptoms, logs, marks, psfs) : buildJSON(exercises, symptoms, logs, marks, psfs)),
-    [fmt, exercises, symptoms, logs, marks, psfs]
+    () => (fmt === "csv" ? buildCSV(exercises, symptoms, logs, marks, psfs) : buildJSON(exercises, symptoms, logs, marks, psfs, questions)),
+    [fmt, exercises, symptoms, logs, marks, psfs, questions]
   );
   const filename = `liikepaivakirja-${keyOf(startOfToday())}.${fmt}`;
 

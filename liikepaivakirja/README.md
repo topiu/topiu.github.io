@@ -10,7 +10,7 @@ the Capacitor shell, so none of this work is throwaway.
 ```bash
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 74 tests: domain invariants, backup logic, mount tests
+npm test               # 90 tests: domain invariants, backup logic, mount tests
 npm run build          # -> dist/         (GitHub Pages)
 npm run build:single   # -> dist-single/index.html (one portable file)
 npm run typecheck      # informational, see "Type checking" below
@@ -46,11 +46,14 @@ src/
   domain/      pure logic, no React, no platform APIs — fully typed, tested
                dates dose taxonomy regions structures library defaults
                steps normalize load exportfmt num
-               psfs report reportview            (+ index.ts barrel)
+               psfs report reportview restore    (+ index.ts barrel)
   storage/     store.ts   IndexedDB, same contract as window.storage
                backup.ts  rolling daily snapshots
   platform/    download.ts  Blob download + clipboard
-  ui/          App Today History Edit Modals Library BodyMap Psfs Report common
+               share.ts     share-sheet + directory-picker capability
+               sw.ts        service worker registration and update state
+  ui/          App Today History Edit Modals Library BodyMap common
+               Psfs Report Restore Update
   styles/      tokens.ts   the palette C and FONT
 tests/         domain.test.ts  smoke.test.tsx
 tools/         slice.py  postslice.py
@@ -85,6 +88,11 @@ your data. Three layers, in decreasing order of how much you should trust them:
 3. **Daily snapshots** (`storage/backup.ts`), taken once at startup, last 14
    kept. These protect against the *app* writing bad data. They live in the same
    IndexedDB, so they do **not** protect against the browser clearing site data.
+
+All three are now readable from **Muokkaa → Palautus** (see below). Every key in
+`DATA_KEYS` must appear in `buildJSON`, or a restore from file silently drops it;
+that rule is what took the export format to version 9, and there is a test that
+fails if a key is added without being exported.
 
 On iPhone, **add the site to your Home Screen**. Safari is the most aggressive
 about clearing script-writable storage for sites you haven't opened in a while,
@@ -154,6 +162,66 @@ Retiring an activity keeps its scored history in the report; "poista kokonaan"
 purges it, and the UI says which is which. The JSON export is now **version 8**
 and carries `psfs`; a v7 file still imports (a missing key normalizes to an empty
 PSFS), and an older build reading a v8 file just ignores the field.
+
+## Offline
+
+`vite-plugin-pwa` (workbox `generateSW`) precaches the shell — `index.html`, the
+JS bundle, the icons, the manifest — so after the first successful load the app
+starts with no network. `navigateFallback` points at `index.html` so a cold start
+resolves offline too.
+
+Two details that are not the defaults, both deliberate:
+
+**Scope.** `sw.js` is emitted next to `index.html`, so at `/liikepaivakirja/` its
+scope is `/liikepaivakirja/`. This matters on a user site: a root-scoped worker
+would silently take over `landing/`, `mokkipohja.html` and every future sibling
+project on the same `github.io` origin.
+
+**Updates are offered, not applied.** `injectRegister: null` turns off the
+plugin's automatic registration; `platform/sw.ts` registers by hand with
+`skipWaiting: false`. `autoUpdate` would swap the assets under a running session,
+and this app writes to IndexedDB continuously — debounced note text, a queued
+dose edit — so a reload mid-write is a small but real way to lose a keystroke.
+Silent waiting is the opposite failure, where a deployed fix never reaches
+anyone. So a banner appears on Tänään, `flushAll()` runs when you tap it, and
+only then does the new worker take over. An update check fires whenever the app
+becomes visible or the connection returns; GitHub Pages deploys are manual and
+infrequent, so no polling timer.
+
+Offline capability arrives on the **second** load — the worker installs in the
+background on the first. The footer says
+"Offline-tila valmistuu seuraavaan käynnistykseen" until it is genuinely ready,
+rather than claiming a capability it does not yet have. The single-file build has
+no worker: that target exists to be opened from disk, where there is nothing to
+cache and no origin to scope to.
+
+## Palautus
+
+`listSnapshots()` and `readSnapshot()` existed since the port with nothing able
+to call them. **Muokkaa → Palautus** is that half, collapsed by default because
+it is the most destructive control in the app.
+
+Everything goes through one two-step flow: pick a source, read what would
+change, then confirm.
+
+- **Laitteen sisäiset kopiot** — the 14 daily snapshots, with the time each was
+  taken. The date alone cannot tell you whether a snapshot predates this
+  morning's edits.
+- **Varmuuskopiotiedosto** — pick a `.json` and see what is in it. This is the
+  "check my backup" path, and it is the same flow stopped after step one, so
+  verification needs no separate code to keep honest. A backup you have never
+  read back is a hope, not a backup.
+
+The confirm step reports `diffDatasets`: counts before and after, and the days
+that would **stop existing**. Lost days are counted directly rather than inferred
+from totals, because a net day-count delta of zero can still hide one day being
+swapped for another. A restore that changes nothing is reported as such — which
+is the expected result when you are only verifying.
+
+Applying reuses App's `applyImport`, so there is one write-everything path rather
+than two that must agree, and a restore is undoable via `physio-undo`.
+`forceSnapshot()` runs first, so the state you restored *away* from survives a
+second restore consuming the undo slot.
 
 ## Deploying to GitHub Pages
 
@@ -228,14 +296,14 @@ where the file went.
 
 ## Not included
 
-- **Offline support.** No service worker, so the app needs the network to load
-  (data stays local once loaded). Adding `vite-plugin-pwa` is a small job — say
-  the word.
-- **A restore UI**, for either the in-browser snapshots or a backup file.
-  `listSnapshots()` / `readSnapshot(date)` exist and nothing calls them; restoring
-  a file today means the existing Historia import.
 - **Verification for the download and share tiers.** Not possible from a web
   page — the browser does not report where the file landed.
+- **A test for `platform/sw.ts` registration.** The state-to-UI path is covered
+  by a mount test that drives the store directly; exercising `register()` itself
+  would mean mocking the whole ServiceWorkerContainer lifecycle for little in
+  return. Verify offline by hand: load once, then Network → Offline, then reload.
+- **Selective restore.** A restore is all-or-nothing. Merging one day out of a
+  snapshot into current data is a different and much harder feature.
 - **A next-day pain field.** Discussed but not built: pain *during* / *right
   after* / *24 h after* a session, which is what a physio actually asks and what
   would sharpen the existing lag analysis.

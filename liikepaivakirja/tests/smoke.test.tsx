@@ -7,6 +7,8 @@ import { describe, it, expect } from "vitest";
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import App from "../src/ui/App";
 import { loadJSON, saveJSONNow } from "../src/storage/store";
+import { maybeSnapshot } from "../src/storage/backup";
+import { __resetSwState, __setSwState } from "../src/platform/sw";
 
 describe("app mounts on IndexedDB", () => {
   it("renders the Finnish UI and seeds default data", async () => {
@@ -108,5 +110,64 @@ describe("clinician report", () => {
     expect(portal.getByText(/Miten luvut on laskettu/)).toBeTruthy();
     /* and it carries the PSFS activity added by the test above */
     expect(portal.getByText("Sukkien pukeminen")).toBeTruthy();
+  });
+});
+
+describe("update banner", () => {
+  it("stays out of the way until a new version is actually waiting", async () => {
+    __resetSwState();
+    const { container } = render(<App />);
+    const q = within(container);
+    await waitFor(() => expect(q.getByText("Tänään")).toBeTruthy());
+    expect(q.queryByText("Uusi versio ladattu")).toBeNull();
+
+    __setSwState({ supported: true, updateWaiting: true });
+    await waitFor(() => expect(q.getByText("Uusi versio ladattu")).toBeTruthy());
+    expect(q.getByText("Päivitä")).toBeTruthy();
+
+    /* dismissing is allowed: "later" is a real answer when you opened the app to
+       log a set, and the worker keeps waiting either way */
+    fireEvent.click(q.getByLabelText("Piilota"));
+    await waitFor(() => expect(q.queryByText("Uusi versio ladattu")).toBeNull());
+    __resetSwState();
+  });
+});
+
+describe("restore", () => {
+  it("is collapsed under Muokkaa and reports honestly when there is nothing to restore", async () => {
+    const { container } = render(<App />);
+    const q = within(container);
+    await waitFor(() => expect(q.getAllByText("Muokkaa").length).toBeGreaterThan(0));
+    fireEvent.click(q.getAllByText("Muokkaa")[0]);
+    const toggle = await waitFor(() => q.getByText("Palauta tai tarkista varmuuskopio"));
+    /* the destructive controls are behind a deliberate tap */
+    expect(q.queryByText("Laitteen sisäiset kopiot")).toBeNull();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(q.getByText("Laitteen sisäiset kopiot")).toBeTruthy());
+    expect(q.getByText("Valitse tiedosto ja tarkista")).toBeTruthy();
+  });
+
+  it("lists a real snapshot and shows what restoring it would change", async () => {
+    /* App has seeded physio-config by now, so there is something to snapshot */
+    expect(await maybeSnapshot()).toBe(true);
+
+    const { container } = render(<App />);
+    const q = within(container);
+    await waitFor(() => expect(q.getAllByText("Muokkaa").length).toBeGreaterThan(0));
+    fireEvent.click(q.getAllByText("Muokkaa")[0]);
+    fireEvent.click(await waitFor(() => q.getByText("Palauta tai tarkista varmuuskopio")));
+
+    /* the snapshot list is read asynchronously from IndexedDB */
+    const row = await waitFor(() => {
+      const el = q.queryByText(/päivää ·/);
+      if (!el) throw new Error("no snapshot row yet");
+      return el;
+    });
+    fireEvent.click(row);
+
+    /* picking one never applies it — you get the diff and a separate confirm */
+    await waitFor(() => expect(q.getByText("Palauta")).toBeTruthy());
+    expect(q.getByText("Peruuta")).toBeTruthy();
+    expect(q.getByText("Päiviä")).toBeTruthy();
   });
 });

@@ -16,10 +16,12 @@
  * export off-device does that.
  */
 
+import { DATA_KEYS } from "../domain/restore";
 import { getRaw, setRaw, delRaw, listKeys } from "./store";
 
 const PREFIX = "snapshot:";
-const KEYS = ["physio-config", "physio-logs", "physio-marks", "physio-psfs", "physio-questions"];
+/* single source of truth: domain/restore.ts defines what a complete dataset is */
+const KEYS = DATA_KEYS as unknown as string[];
 const KEEP = 14;
 
 function todayKey(): string {
@@ -59,18 +61,36 @@ export async function listSnapshots(): Promise<string[]> {
   return (await listKeys(PREFIX)).map((k) => k.slice(PREFIX.length)).sort().reverse();
 }
 
-/* Returns the stored parts for a given date, for a future restore UI. */
-export async function readSnapshot(date: string): Promise<Record<string, any> | null> {
+/* Returns the stored parts for a given date, keyed exactly as they are in the
+   live store so domain/restore.ts can read either interchangeably. `at` is the
+   wall-clock time the snapshot was taken, which is what the picker shows —
+   the date alone cannot say whether it predates this morning's edits. */
+export async function readSnapshot(
+  date: string
+): Promise<{ at: string | null; data: Record<string, any> } | null> {
   try {
     const raw = await getRaw(PREFIX + date);
     if (raw == null) return null;
     const obj = JSON.parse(raw);
-    const out: Record<string, any> = {};
+    const data: Record<string, any> = {};
     for (const k of KEYS) {
-      out[k] = obj.parts && obj.parts[k] != null ? JSON.parse(obj.parts[k]) : null;
+      data[k] = obj.parts && obj.parts[k] != null ? JSON.parse(obj.parts[k]) : null;
     }
-    return out;
+    return { at: typeof obj.at === "string" ? obj.at : null, data };
   } catch {
     return null;
+  }
+}
+
+/* Take a snapshot right now under an explicit date key, overwriting today's.
+   Used immediately before a restore: `physio-undo` already makes one restore
+   reversible, and this makes the state you restored *from* recoverable after a
+   second restore has consumed the undo slot. */
+export async function forceSnapshot(): Promise<boolean> {
+  try {
+    await delRaw(PREFIX + todayKey());
+    return await maybeSnapshot();
+  } catch {
+    return false;
   }
 }
