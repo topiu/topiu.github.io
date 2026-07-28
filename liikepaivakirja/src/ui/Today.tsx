@@ -19,8 +19,8 @@ export function TodayView({
   log,
   setExerciseSets,
   setExerciseMins,
-  toggleSymptom,
-  setSeverity,
+  setSymptomLevel,
+  clearSymptom,
   setQuality,
   setSteps,
   onNoteChange,
@@ -111,48 +111,66 @@ export function TodayView({
       {/* Symptoms */}
       <SectionLabel>Oireet</SectionLabel>
       <div style={{ fontSize: 12.5, color: C.inkSoft, margin: "-4px 2px 8px" }}>
-        Merkitse, jos jokin vaiva on uusinut tänään.
+        Napauta voimakkuutta, jos jokin vaiva on uusinut tänään. Sama napautus uudelleen poistaa
+        merkinnän.
       </div>
       <Card style={{ padding: 6 }}>
         {symptoms.length === 0 && <Empty>Ei oireita seurannassa.</Empty>}
         {symptoms.map((s, i) => {
           const on = log.flared.includes(s.id);
+          const lvl = log.severity[s.id];
           return (
             <div key={s.id} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.line}`, background: on ? C.amberTint : "transparent", borderRadius: 11, transition: "background .16s" }}>
-              <button className="tap" onClick={() => toggleSymptom(s.id)}
-                style={{ display: "flex", alignItems: "center", gap: 13, width: "100%", textAlign: "left", padding: "13px 12px" }}>
-                <span style={{ flex: "0 0 auto", width: 26, height: 26, borderRadius: "50%", border: on ? "none" : `2px solid ${C.line}`, background: on ? C.amber : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {on && <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#fff" }} />}
+              {/* Name and levels on one row. The row wraps rather than truncating
+                  on a narrow screen: "kohtalainen" is a long word and a clipped
+                  symptom name is worse than a second line. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, rowGap: 6, flexWrap: "wrap", padding: "9px 10px" }}>
+                <span
+                  title={s.name}
+                  style={{ flex: "1 1 110px", minWidth: 0, fontSize: 15, fontWeight: 500, color: on ? C.amber : C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {s.name}
                 </span>
-                <span style={{ fontSize: 15.5, fontWeight: 500, color: on ? C.amber : C.ink, flex: 1 }}>{s.name}</span>
-                <span style={{ fontSize: 13, color: on ? C.amber : C.inkFaint }}>{on ? "uusi" : "ei oiretta"}</span>
-              </button>
+                <div style={{ flex: "0 0 auto", display: "flex", gap: 3, marginLeft: "auto" }}>
+                  {SEVERITY.map((sv) => {
+                    const sel = on && lvl === sv.v;
+                    return (
+                      <button
+                        key={sv.v}
+                        className="tap"
+                        aria-label={`${s.name}: ${sv.label}`}
+                        aria-pressed={sel}
+                        onClick={() => setSymptomLevel(s.id, sv.v)}
+                        style={{ fontSize: 11.5, fontWeight: 600, padding: "6px 8px", borderRadius: 8, border: `1px solid ${sel ? C.amber : C.line}`, background: sel ? C.amber : C.surface, color: sel ? "#fff" : C.inkSoft, transition: "background .14s, color .14s, border-color .14s" }}>
+                        {sv.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               {on && (
-                <div style={{ padding: "0 12px 13px 51px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 12.5, color: C.inkSoft }}>Voimakkuus:</span>
-                    {SEVERITY.map((sv) => {
-                      const sel = log.severity[s.id] === sv.v;
-                      return (
-                        <button key={sv.v} className="tap" onClick={() => setSeverity(s.id, sv.v)}
-                          style={{ fontSize: 12.5, fontWeight: 600, padding: "5px 11px", borderRadius: 999, border: `1px solid ${sel ? C.amber : C.amberLine}`, background: sel ? C.amber : "transparent", color: sel ? "#fff" : C.amber }}>
-                          {sv.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 7 }}>
-                    <span style={{ fontSize: 12.5, color: C.inkSoft }}>Laatu:</span>
-                    {QUALITIES.map((q) => {
-                      const sel = log.quality[s.id] === q.id;
-                      return (
-                        <button key={q.id} className="tap" onClick={() => setQuality(s.id, q.id)}
-                          style={{ fontSize: 12.5, fontWeight: 600, padding: "5px 11px", borderRadius: 999, border: `1px solid ${sel ? C.slate : C.line}`, background: sel ? C.slate : "transparent", color: sel ? "#fff" : C.slate }}>
-                          {q.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", padding: "0 10px 10px" }}>
+                  <span style={{ fontSize: 12, color: C.inkSoft, marginRight: 2 }}>Laatu:</span>
+                  {QUALITIES.map((q) => {
+                    const sel = log.quality[s.id] === q.id;
+                    return (
+                      <button
+                        key={q.id}
+                        className="tap"
+                        aria-pressed={sel}
+                        onClick={() => setQuality(s.id, q.id)}
+                        style={{ fontSize: 12, fontWeight: 600, padding: "5px 10px", borderRadius: 999, border: `1px solid ${sel ? C.slate : C.line}`, background: sel ? C.slate : "transparent", color: sel ? "#fff" : C.slate }}>
+                        {q.label}
+                      </button>
+                    );
+                  })}
+                  <button
+                    className="tap"
+                    onClick={() => clearSymptom(s.id)}
+                    aria-label={`Poista merkintä: ${s.name}`}
+                    style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, padding: "5px 8px", borderRadius: 8, color: C.inkFaint }}>
+                    <X size={13} /> Poista
+                  </button>
                 </div>
               )}
             </div>

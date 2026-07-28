@@ -1,44 +1,77 @@
-/* platform/sw — service worker teardown.
+/* platform/sw — service worker registration, and the ways out of it.
  *
- * Offline support was published and withdrawn. It is withdrawn rather than fixed
- * because it was shipped without a way to test it at runtime and without a way
- * for the user to recover from it: on an iOS Home Screen app there are no
- * developer tools, and the remedy an ordinary person would reach for — clearing
- * website data — destroys the diary. That is the wrong risk for an app whose
- * entire premise is that the data is yours and stays put.
+ * Offline was published once and withdrawn the same day. The withdrawal note said
+ * what a second attempt would need first: a way to turn it off without a deploy,
+ * a visible switch inside the app, and a build identifier so that "did the deploy
+ * take effect" is answerable by looking rather than by inference. This is that.
  *
- * Two mechanisms, because one of them has to work without any cooperation from
- * a device that may be serving a stale cached page:
+ * Three ways out, in descending order of how bad things have to be:
  *
- *   1. public/sw.js is now a self-destroying worker published at the same URL as
- *      the old one. Any browser holding the old worker fetches it on its next
- *      update check, installs it, and it wipes Cache Storage, unregisters itself
- *      and reloads open windows. This is what rescues a device that cannot even
- *      load the new bundle.
- *   2. This module unregisters anything still registered under this scope on
- *      startup, for the case where the page did load but a worker lingers.
+ *   1. `?sw=off` in the URL. Unregisters every worker under this scope, deletes
+ *      the caches, and *persists* the choice. This is the one that matters: it
+ *      works on an iOS Home Screen install, where there are no developer tools,
+ *      because the same URL can always be opened in Safari with a query string
+ *      typed on the end. `?sw=on` puts it back.
+ *   2. The Offline-tila switch under Muokkaa, for the ordinary case.
+ *   3. `public/sw.js` is still the self-destroying worker from the rollback, at the
+ *      URL the *old* worker occupied, so a device that never came back gets
+ *      retired by it. The new worker is at `service-worker.js`, so the two cannot
+ *      shadow each other.
  *
- * Neither path touches IndexedDB. Cache Storage and IndexedDB are separate
- * stores; the diary is in the latter and is not involved.
+ * The preference lives in localStorage rather than the app's IndexedDB store for
+ * two reasons: it must be readable synchronously before React mounts, and one
+ * situation in which you would want to switch offline off is IndexedDB itself
+ * misbehaving. It is a per-device setting, not diary data, so it is deliberately
+ * absent from DATA_KEYS and from the export.
  *
- * If offline comes back, it needs: a build flag so it can be turned off without
- * a deploy, an in-app "poista offline-tila" button, and a manual test on a real
- * Home Screen install before it ships.
+ * Updates are offered, not applied. The app writes to IndexedDB continuously —
+ * debounced note text, a queued dose edit — so reloading mid-write remains a
+ * small but real way to lose a keystroke.
  */
 
 import { useSyncExternalStore } from "react";
+import { flushAll } from "../storage/store";
+
+declare const __BUILD_ID__: string;
+
+export const BUILD_ID: string = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "dev";
+
+const PREF_KEY = "physio-offline";
+const SW_FILE = "service-worker.js";
 
 export type SwState = {
+  /* the browser has the API, in a context allowed to use it */
   supported: boolean;
+  /* the user's choice; offline is on unless switched off */
+  enabled: boolean;
+  /* a worker controls this page, so the next cold start works without network */
   offlineReady: boolean;
+  /* a newer version is installed and waiting for permission to take over */
   updateWaiting: boolean;
+  /* registration failed; surfaced, never thrown */
   error: string | null;
 };
 
-/* Inert. Kept so the components that read it need no conditional imports. */
-const INERT: SwState = { supported: false, offlineReady: false, updateWaiting: false, error: null };
-let state: SwState = INERT;
+let state: SwState = { supported: false, enabled: true, offlineReady: false, updateWaiting: false, error: null };
 const subs = new Set<() => void>();
+let reg: ServiceWorkerRegistration | null = null;
+let reloading = false;
+
+function set(patch: Partial<SwState>) {
+  const next = { ...state, ...patch };
+  /* useSyncExternalStore compares by identity; avoid pointless churn */
+  if (
+    next.supported === state.supported &&
+    next.enabled === state.enabled &&
+    next.offlineReady === state.offlineReady &&
+    next.updateWaiting === state.updateWaiting &&
+    next.error === state.error
+  ) {
+    return;
+  }
+  state = next;
+  subs.forEach((f) => f());
+}
 
 export const getSwState = (): SwState => state;
 
@@ -61,31 +94,174 @@ export function swSupported(): boolean {
   }
 }
 
-/* Remove any worker registered under this scope, and drop the caches it made.
-   Safe to run on every startup: with nothing registered it does nothing. */
-export function unregisterServiceWorkers(): void {
+/* ------------------------------------------------------------------ */
+/*  The URL escape hatch — pure, so it is testable                     */
+/* ------------------------------------------------------------------ */
+/* Accepts ?sw=off / ?sw=on, plus ?nosw as a shorthand for off: in a panic the
+   thing you remember typing is not necessarily the thing that was documented. */
+export function swOverrideFromSearch(search: string): "on" | "off" | null {
+  if (!search) return null;
+  let params: URLSearchParams;
+  try {
+    params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  } catch {
+    return null;
+  }
+  if (params.has("nosw")) return "off";
+  const v = (params.get("sw") || "").toLowerCase();
+  if (v === "off" || v === "0" || v === "false") return "off";
+  if (v === "on" || v === "1" || v === "true") return "on";
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Preference                                                         */
+/* ------------------------------------------------------------------ */
+export function offlineEnabled(): boolean {
+  try {
+    return window.localStorage.getItem(PREF_KEY) !== "off";
+  } catch {
+    /* private mode or storage disabled: default on, and registration simply
+       fails harmlessly if it cannot proceed */
+    return true;
+  }
+}
+
+function writePref(on: boolean) {
+  try {
+    if (on) window.localStorage.removeItem(PREF_KEY);
+    else window.localStorage.setItem(PREF_KEY, "off");
+  } catch {
+    /* the switch still takes effect for this session */
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Teardown                                                           */
+/* ------------------------------------------------------------------ */
+/* Removes every worker under this scope and the caches they made. Cache Storage
+   only: IndexedDB, and therefore the diary, is never touched by this. */
+export async function tearDown(): Promise<void> {
   if (!swSupported()) return;
   try {
-    void navigator.serviceWorker
-      .getRegistrations()
-      .then((regs) => Promise.all(regs.map((r) => r.unregister().catch(() => false))))
-      .catch(() => {});
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map((r) => r.unregister().catch(() => false)));
   } catch {
     /* ignore */
   }
   try {
     if (typeof caches !== "undefined" && caches.keys) {
-      void caches
-        .keys()
-        .then((keys) => Promise.all(keys.map((k) => caches.delete(k).catch(() => false))))
-        .catch(() => {});
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k).catch(() => false)));
     }
   } catch {
     /* ignore */
   }
+  reg = null;
+  set({ offlineReady: false, updateWaiting: false });
 }
 
-/* Still used by the footer note, and independent of service workers. */
+/* ------------------------------------------------------------------ */
+/*  Registration                                                       */
+/* ------------------------------------------------------------------ */
+/* A waiting worker only counts as an update when something already controls the
+   page. On a first visit it installs and waits with no controller, and calling
+   that an update would ask the user to reload a page they just opened. */
+function noteWaiting() {
+  set({ updateWaiting: !!(reg && reg.waiting && navigator.serviceWorker.controller) });
+}
+
+function doRegister() {
+  const base = import.meta.env.BASE_URL || "/";
+  navigator.serviceWorker
+    .register(`${base}${SW_FILE}`, { scope: base })
+    .then((r) => {
+      reg = r;
+      noteWaiting();
+      r.addEventListener("updatefound", () => {
+        const installing = r.installing;
+        if (!installing) return;
+        installing.addEventListener("statechange", () => {
+          if (installing.state === "installed") noteWaiting();
+          if (installing.state === "activated") set({ offlineReady: true });
+        });
+      });
+      /* Pages deploys are manual and infrequent, so a check whenever the app
+         becomes visible or the connection returns is enough — no polling timer */
+      const check = () => {
+        if (document.visibilityState === "visible") void r.update().catch(() => {});
+      };
+      document.addEventListener("visibilitychange", check);
+      window.addEventListener("online", check);
+    })
+    .catch((err) => {
+      set({ error: err && err.message ? String(err.message) : "rekisteröinti ei onnistunut" });
+    });
+
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    set({ offlineReady: true });
+    if (reloading) {
+      reloading = false;
+      window.location.reload();
+    }
+  });
+}
+
+/* Called once from main.tsx. The URL override is honoured before anything else,
+   so a device serving a stale shell can still be rescued by a query string. */
+export function initServiceWorker(): void {
+  if (!swSupported()) {
+    set({ supported: false });
+    return;
+  }
+  const override = swOverrideFromSearch(typeof location === "undefined" ? "" : location.search);
+  if (override) writePref(override === "on");
+
+  const enabled = offlineEnabled();
+  set({ supported: true, enabled, offlineReady: !!navigator.serviceWorker.controller });
+
+  if (!enabled) {
+    void tearDown();
+    return;
+  }
+  doRegister();
+}
+
+export async function setOfflineEnabled(on: boolean): Promise<void> {
+  writePref(on);
+  set({ enabled: on });
+  if (on) {
+    if (swSupported()) doRegister();
+  } else {
+    await tearDown();
+  }
+}
+
+/* Hand control to the waiting worker, then reload. Debounced writes are flushed
+   first: they are the only state outside IndexedDB when the page is replaced. */
+export function applyUpdate(): void {
+  try {
+    flushAll();
+  } catch {
+    /* a failed flush must not block the update */
+  }
+  const waiting = reg && reg.waiting;
+  if (!waiting) {
+    window.location.reload();
+    return;
+  }
+  reloading = true;
+  waiting.postMessage({ type: "SKIP_WAITING" });
+  /* controllerchange is the happy path; this covers a worker that never
+     activates and would otherwise leave the banner up forever */
+  window.setTimeout(() => {
+    if (reloading) {
+      reloading = false;
+      window.location.reload();
+    }
+  }, 2500);
+}
+
 export function useOnlineStatus(): boolean {
   return useSyncExternalStore(
     (fn) => {
@@ -101,15 +277,14 @@ export function useOnlineStatus(): boolean {
   );
 }
 
-/* Test seams retained so the existing mount tests keep compiling. */
+/* Test seams. The module holds process-wide state, which is right in a browser
+   and awkward in a test file that mounts the app repeatedly. */
 export function __resetSwState(): void {
-  state = INERT;
+  state = { supported: false, enabled: true, offlineReady: false, updateWaiting: false, error: null };
+  reg = null;
+  reloading = false;
   subs.forEach((f) => f());
 }
 export function __setSwState(patch: Partial<SwState>): void {
-  state = { ...state, ...patch };
-  subs.forEach((f) => f());
-}
-export function applyUpdate(): void {
-  window.location.reload();
+  set(patch);
 }

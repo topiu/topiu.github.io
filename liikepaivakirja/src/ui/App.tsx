@@ -8,7 +8,7 @@ import { EditView } from "./Edit";
 import { HistoryView } from "./History";
 import { ExportModal, ImportModal, StepsModal } from "./Modals";
 import { ReportModal } from "./Report";
-import { OfflineNote } from "./Update";
+import { OfflineNote, OfflineSettings, UpdateBanner } from "./Update";
 import { TodayView } from "./Today";
 import { Style } from "./common";
 
@@ -330,17 +330,40 @@ export default function App() {
     });
   }, [programUndo]);
 
-  const toggleSymptom = (id) =>
+  /* One tap both flares a symptom and grades it, because those were never two
+     decisions: nobody knows a symptom came back without also knowing roughly how
+     bad it was. Tapping the level that is already set clears the whole entry, so
+     a mis-tap costs one tap to undo rather than a hunt for a separate toggle.
+
+     A consequence worth stating: it is no longer possible to record "it flared
+     but I have no idea how badly". That state was cheap to produce and useless to
+     read — the report's mean severity had to ignore it — so requiring a level
+     makes the data more complete, not less honest. Days recorded that way before
+     this change still load and display as flared with no level selected. */
+  const setSymptomLevel = (id, v) =>
     updateLog(selKey, (l) => {
-      if (l.flared.includes(id)) {
+      const on = l.flared.includes(id);
+      if (on && l.severity[id] === v) {
         l.flared = l.flared.filter((x) => x !== id);
         delete l.severity[id];
         delete l.quality[id];
       } else {
-        l.flared = [...l.flared, id];
+        if (!on) l.flared = [...l.flared, id];
+        l.severity[id] = v;
       }
       return l;
     });
+
+  /* Explicit removal. Needed for its own sake, and it is the only way to clear a
+     day recorded before levels were mandatory, where no level button is active. */
+  const clearSymptom = (id) =>
+    updateLog(selKey, (l) => {
+      l.flared = l.flared.filter((x) => x !== id);
+      delete l.severity[id];
+      delete l.quality[id];
+      return l;
+    });
+
   const setSteps = (n) =>
     updateLog(selKey, (l) => {
       l.steps = Math.max(0, Math.min(parseInt(n, 10) || 0, 200000));
@@ -594,6 +617,7 @@ export default function App() {
           ))}
         </div>
 
+        {tab === "today" && <UpdateBanner />}
         {tab === "today" && (
           <BackupBanner exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} questions={questions} />
         )}
@@ -610,8 +634,8 @@ export default function App() {
             log={log}
             setExerciseSets={setExerciseSets}
             setExerciseMins={setExerciseMins}
-            toggleSymptom={toggleSymptom}
-            setSeverity={setSeverity}
+            setSymptomLevel={setSymptomLevel}
+            clearSymptom={clearSymptom}
             setQuality={setQuality}
             setSteps={setSteps}
             onNoteChange={onNoteChange}
@@ -691,6 +715,7 @@ export default function App() {
             canUndo={canUndoImport}
           />
         )}
+        {tab === "edit" && <OfflineSettings />}
 
         {hasStore && (
           <p style={{ marginTop: 26, textAlign: "center", fontSize: 12, color: C.inkFaint }}>

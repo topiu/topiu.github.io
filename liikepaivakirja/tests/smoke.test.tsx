@@ -189,3 +189,76 @@ describe("weekly prescription", () => {
     await waitFor(() => expect(q.getByText(/^\d+\/3 vk$/)).toBeTruthy());
   });
 });
+
+describe("symptom logging", () => {
+  it("takes one tap to flare and grade, and one more to undo it", async () => {
+    const { container } = render(<App />);
+    const q = within(container);
+    const moderate = await waitFor(() => q.getByLabelText("Nivunen: kohtalainen"));
+
+    /* nothing is flared until asked: the quality row is the tell */
+    expect(q.queryByText("Laatu:")).toBeNull();
+    expect(moderate.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(moderate);
+    /* one tap did both jobs — the symptom is flared and graded */
+    await waitFor(() => expect(q.getByLabelText("Nivunen: kohtalainen").getAttribute("aria-pressed")).toBe("true"));
+    expect(q.getByText("Laatu:")).toBeTruthy();
+    expect(q.getByLabelText("Nivunen: lievä").getAttribute("aria-pressed")).toBe("false");
+
+    /* tapping the active level clears the whole entry */
+    fireEvent.click(q.getByLabelText("Nivunen: kohtalainen"));
+    await waitFor(() => expect(q.queryByText("Laatu:")).toBeNull());
+    expect(q.getByLabelText("Nivunen: kohtalainen").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("changes level in one tap without clearing the entry", async () => {
+    const { container } = render(<App />);
+    const q = within(container);
+    fireEvent.click(await waitFor(() => q.getByLabelText("Selkä: lievä")));
+    await waitFor(() => expect(q.getByLabelText("Selkä: lievä").getAttribute("aria-pressed")).toBe("true"));
+
+    fireEvent.click(q.getByLabelText("Selkä: kova"));
+    await waitFor(() => expect(q.getByLabelText("Selkä: kova").getAttribute("aria-pressed")).toBe("true"));
+    expect(q.getByLabelText("Selkä: lievä").getAttribute("aria-pressed")).toBe("false");
+    /* still one entry, not two */
+    expect(q.getAllByText("Laatu:").length).toBe(1);
+
+    fireEvent.click(q.getByLabelText("Poista merkintä: Selkä"));
+    await waitFor(() => expect(q.queryByText("Laatu:")).toBeNull());
+  });
+
+  it("keeps quality optional and independent of level", async () => {
+    const { container } = render(<App />);
+    const q = within(container);
+    fireEvent.click(await waitFor(() => q.getByLabelText("Pakara: kova")));
+    const ache = await waitFor(() => q.getByText("jomotus"));
+    expect(ache.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(ache);
+    await waitFor(() => expect(q.getByText("jomotus").getAttribute("aria-pressed")).toBe("true"));
+    /* level survives setting a quality */
+    expect(q.getByLabelText("Pakara: kova").getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(q.getByLabelText("Poista merkintä: Pakara"));
+    await waitFor(() => expect(q.queryByText("Laatu:")).toBeNull());
+  });
+});
+
+describe("offline settings", () => {
+  it("shows the running version and offers a way to switch offline off", async () => {
+    const { container } = render(<App />);
+    const q = within(container);
+    await waitFor(() => expect(q.getAllByText("Muokkaa").length).toBeGreaterThan(0));
+    fireEvent.click(q.getAllByText("Muokkaa")[0]);
+
+    await waitFor(() => expect(q.getByText("Offline ja versio")).toBeTruthy());
+    /* the build identifier is the thing that answers "did the deploy land" */
+    expect(q.getByText("Versio")).toBeTruthy();
+    /* jsdom has no ServiceWorkerContainer, so the honest status is "not supported"
+       and the switch is disabled rather than pretending to work */
+    const toggle = q.getByLabelText("Offline-tila");
+    expect(q.getByText("Ei tuettu tässä selaimessa")).toBeTruthy();
+    expect(toggle.hasAttribute("disabled")).toBe(true);
+    /* and the escape hatch is documented where someone stuck would look for it */
+    expect(q.getByText(/\?sw=off/)).toBeTruthy();
+  });
+});
