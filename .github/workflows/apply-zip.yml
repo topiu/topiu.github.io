@@ -1,0 +1,164 @@
+name: Apply zip
+
+# Mobile-only update path. GitHub cannot extract archives, so:
+#
+#   1. Add file > Upload files, drop the .zip anywhere in the repo (root is fine)
+#   2. Actions > "Apply zip" > Run workflow, adjust the fields, Run
+#   3. Actions > "Deploy to GitHub Pages" > Run workflow
+#
+# Step 3 is separate on purpose: commits pushed with the default GITHUB_TOKEN do
+# not trigger other workflows, so the Pages build will not start by itself.
+#
+# The job writes a summary of exactly what changed, which is far easier to read
+# on a phone than the log.
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip:
+        description: 'Path to the zip. Leave empty to auto-detect a single .zip in the repo root.'
+        required: false
+        default: ''
+      dest:
+        description: 'Destination folder inside the repo.'
+        required: false
+        default: 'liikepaivakirja'
+      strip_root:
+        description: 'Drop the archive top-level folder (auto = only if the zip has exactly one).'
+        required: false
+        default: 'auto'
+        type: choice
+        options: ['auto', 'yes', 'no']
+      mode:
+        description: 'merge = overwrite and keep extra files, replace = destination mirrors the zip.'
+        required: false
+        default: 'merge'
+        type: choice
+        options: ['merge', 'replace']
+      delete_zip:
+        description: 'Delete the zip from the repo after applying.'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-zip
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract and commit
+        # Inputs go through env, never interpolated into the script body —
+        # ${{ }} inside a run block is a command-injection vector.
+        env:
+          ZIP: ${{ inputs.zip }}
+          DEST: ${{ inputs.dest }}
+          STRIP: ${{ inputs.strip_root }}
+          MODE: ${{ inputs.mode }}
+          DELETE_ZIP: ${{ inputs.delete_zip }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob dotglob
+
+          # ---- locate the archive ------------------------------------------
+          if [ -z "${ZIP:-}" ]; then
+            found=( *.zip )
+            if [ ${#found[@]} -eq 0 ]; then
+              echo "::error::No .zip found in the repository root. Upload one, or name it in the 'zip' input."
+              exit 1
+            fi
+            if [ ${#found[@]} -gt 1 ]; then
+              echo "::error::More than one .zip in the root (${found[*]}). Name the one you want in the 'zip' input."
+              exit 1
+            fi
+            ZIP="${found[0]}"
+          fi
+          [ -f "$ZIP" ] || { echo "::error::No such file: $ZIP"; exit 1; }
+          echo "archive: $ZIP"
+
+          # ---- validate the destination ------------------------------------
+          case "$DEST" in
+            ""|.|./) DEST="." ;;
+            /*) echo "::error::dest must be relative to the repo."; exit 1 ;;
+            *..*) echo "::error::dest must not contain '..'."; exit 1 ;;
+            .git|.git/*) echo "::error::refusing to write into .git."; exit 1 ;;
+          esac
+
+          # ---- extract to a scratch dir ------------------------------------
+          work="$(mktemp -d)"
+          unzip -q "$ZIP" -d "$work"
+
+          # zip-slip guard: nothing may resolve outside the scratch dir
+          while IFS= read -r -d '' p; do
+            case "$(realpath -m "$p")" in
+              "$work"|"$work"/*) : ;;
+              *) echo "::error::archive tries to escape the extraction directory: $p"; exit 1 ;;
+            esac
+          done < <(find "$work" -mindepth 1 -print0)
+
+          # ---- strip a single top-level folder -----------------------------
+          top=( "$work"/* )
+          if [ "$STRIP" = "yes" ] || { [ "$STRIP" = "auto" ] && [ ${#top[@]} -eq 1 ] && [ -d "${top[0]}" ]; }; then
+            if [ ${#top[@]} -ne 1 ] || [ ! -d "${top[0]}" ]; then
+              echo "::error::strip_root=yes but the archive has no single top-level folder."
+              exit 1
+            fi
+            src="${top[0]}"
+            echo "stripping top-level folder: $(basename "$src")"
+          else
+            src="$work"
+          fi
+
+          # ---- apply --------------------------------------------------------
+          if [ "$MODE" = "replace" ] && [ "$DEST" != "." ] && [ -d "$DEST" ]; then
+            echo "replace: clearing $DEST"
+            rm -rf -- "$DEST"
+          fi
+          mkdir -p -- "$DEST"
+          cp -a "$src"/. "$DEST"/
+
+          if [ "$DELETE_ZIP" = "true" ]; then rm -f -- "$ZIP"; fi
+          rm -rf -- "$work"
+
+          # ---- commit -------------------------------------------------------
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+
+          {
+            echo "## Apply zip"
+            echo
+            echo "- archive: \`$ZIP\`"
+            echo "- destination: \`$DEST\`"
+            echo "- mode: \`$MODE\`"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if git diff --cached --quiet; then
+            echo "No changes — the repo already matches the archive."
+            echo "**No changes.** The repo already matched the archive." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo '### Changed files'
+            echo
+            echo '```'
+            git diff --cached --stat
+            echo '```'
+            echo
+            echo 'Next: run the **Deploy to GitHub Pages** workflow — a push made with'
+            echo 'GITHUB_TOKEN does not trigger it automatically.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          git commit -m "Apply $ZIP to $DEST ($MODE)"
+          git push
