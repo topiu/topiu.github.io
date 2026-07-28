@@ -1,7 +1,7 @@
 /* ui/Today — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useEffect, useRef } from "react";
-import { ChevronLeft, ChevronRight, Check, Plus, Minus, X, Zap, HelpCircle } from "lucide-react";
-import { QUALITIES, SEVERITY, WD_LONG, addDays, dayDoseOf, doseLabel, goalMinOf, goalOf, isMin } from "../domain";
+import { ChevronLeft, ChevronRight, Check, CheckCheck, Plus, Minus, X, Zap, HelpCircle, RotateCcw } from "lucide-react";
+import { FREQ_DAILY, QUALITIES, SEVERITY, WD_LONG, addDays, dayDoseOf, doseLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isMin, weekProgress } from "../domain";
 import { PsfsCard } from "./Psfs";
 import { C } from "../styles/tokens";
 import { Card, Empty, IconBtn, MiniBtn, SectionLabel } from "./common";
@@ -36,6 +36,10 @@ export function TodayView({
   psfsRename,
   psfsRetire,
   psfsForget,
+  logs,
+  completeProgram,
+  programUndo,
+  undoProgram,
 }) {
   const doneCount = exercises.filter((e) =>
     isMin(e) ? (log.mins[e.id] || 0) >= goalMinOf(log, e) : (log.sets[e.id] || 0) >= goalOf(log, e)
@@ -76,6 +80,15 @@ export function TodayView({
 
       {/* Exercises */}
       <SectionLabel>Liikkeet</SectionLabel>
+      <ProgramButton
+        exercises={exercises}
+        logs={logs}
+        log={log}
+        dateKey={dateKey}
+        onComplete={completeProgram}
+        undo={programUndo && programUndo.key === dateKey ? programUndo : null}
+        onUndo={undoProgram}
+      />
       <Card style={{ padding: 6 }}>
         {exercises.length === 0 && <Empty>Ei liikkeitä vielä.</Empty>}
         {exercises.map((e, i) => (
@@ -90,6 +103,7 @@ export function TodayView({
             onSet={(n) => setExerciseSets(e.id, n)}
             onMin={(m) => setExerciseMins(e.id, m)}
             isFirst={i === 0}
+            week={freqOf(e) < FREQ_DAILY ? weekProgress(logs, e, dateKey) : null}
           />
         ))}
       </Card>
@@ -259,7 +273,7 @@ export function StepsField({ value, onCommit }) {
 }
 
 /* one exercise row with set tracking; supports logging beyond the goal ("overdrive") */
-export function ExerciseRow({ ex, completed, dayGoal, dayDose, minutes, goalMin, onSet, onMin, isFirst }) {
+export function ExerciseRow({ ex, completed, dayGoal, dayDose, minutes, goalMin, onSet, onMin, isFirst, week }) {
   const [showHelp, setShowHelp] = useState(false);
   const minute = isMin(ex);
   const target = minute ? goalMin : dayGoal;
@@ -301,6 +315,13 @@ export function ExerciseRow({ ex, completed, dayGoal, dayDose, minutes, goalMin,
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 15.5, fontWeight: 500, color: complete ? C.pineDeep : C.ink }}>{ex.name}</span>
+          {week && (
+            <span
+              title={`Tavoite ${week.target}× viikossa`}
+              style={{ marginLeft: 7, fontSize: 11.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", padding: "1px 6px", borderRadius: 6, whiteSpace: "nowrap", color: week.met ? C.pineDeep : C.inkSoft, background: week.met ? C.pineTint : C.surfaceSoft, border: `1px solid ${week.met ? C.pineSoft : C.line}` }}>
+              {week.done}/{week.target} vk
+            </span>
+          )}
           {hasDesc && (
             <span
               role="button"
@@ -450,5 +471,56 @@ export function RangeArc({ done, total, size = 176 }) {
         / {total} liikettä
       </text>
     </svg>
+  );
+}
+
+/* One tap to mark the day's programme done.
+ *
+ * Deliberately not "same as yesterday". Yesterday may have been a partial day,
+ * and copying it forward would turn a missed session into the new normal. The
+ * reference is today's prescription.
+ *
+ * The button disappears when there is nothing left to owe, rather than sitting
+ * there greyed out — on the one screen that has to stay fast, a control that
+ * does nothing is noise. Exercises whose weekly target is already met are not
+ * counted as owed: this exists to remove friction, not to nudge anyone into
+ * extra sessions.
+ */
+function ProgramButton({ exercises, logs, log, dateKey, onComplete, undo, onUndo }) {
+  if (undo) {
+    return (
+      <div
+        style={{ display: "flex", alignItems: "center", gap: 10, background: C.pineTint, border: `1px solid ${C.pineSoft}`, borderRadius: 13, padding: "10px 12px", marginBottom: 10 }}>
+        <CheckCheck size={17} style={{ flex: "0 0 auto", color: C.pineDeep }} />
+        <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, color: C.ink }}>
+          {undo.filled} {undo.filled === 1 ? "liike" : "liikettä"} merkittiin tehdyksi.
+        </span>
+        <button
+          className="tap"
+          onClick={onUndo}
+          style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 5, padding: "7px 11px", borderRadius: 9, border: `1px solid ${C.line}`, background: C.surface, color: C.inkSoft, fontSize: 13, fontWeight: 600 }}>
+          <RotateCcw size={13} /> Kumoa
+        </button>
+      </div>
+    );
+  }
+
+  const owed = exercises.filter((ex) => {
+    if (ex.archived) return false;
+    if (isCompleteOn(log, ex)) return false;
+    if (freqOf(ex) < FREQ_DAILY && weekProgress(logs, ex, dateKey).met) return false;
+    return true;
+  });
+  if (!owed.length) return null;
+
+  return (
+    <button
+      className="tap"
+      onClick={onComplete}
+      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 10, padding: "13px", borderRadius: 13, border: `1px solid ${C.pine}`, background: C.surface, color: C.pineDeep, fontSize: 15, fontWeight: 600 }}>
+      <CheckCheck size={18} />
+      Merkitse ohjelma tehdyksi
+      <span style={{ fontWeight: 500, color: C.inkFaint, fontSize: 13.5 }}>({owed.length})</span>
+    </button>
   );
 }

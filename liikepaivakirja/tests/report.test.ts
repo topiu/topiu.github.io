@@ -151,6 +151,52 @@ describe("report adherence", () => {
   });
 });
 
+describe("report adherence with weekly prescriptions", () => {
+  /* Three complete sessions in the seven days ending 28.7. Any seven-day window
+     asks for exactly `freq` sessions regardless of where the week boundary
+     falls, which makes this the clearest possible case. */
+  const logs = {
+    "2026-07-22": day({ a: 2 }, { a: { sets: 2 } }),
+    "2026-07-25": day({ a: 2 }, { a: { sets: 2 } }),
+    "2026-07-28": day({ a: 2 }, { a: { sets: 2 } }),
+  };
+
+  it("scores a 3×/week exercise against its weekly target", () => {
+    const m = buildReport({ exercises: [ex("a", "Loitonnus", 2, { freq: 3 })], logs, today: TODAY, days: 7 });
+    const row = m.exercises[0];
+    expect(row.target).toBe(3);
+    expect(row.daysComplete).toBe(3);
+    expect(row.completePct).toBe(100);
+    expect(m.adherence.pct).toBe(100);
+  });
+
+  it("is the old calendar-day behaviour for a daily exercise", () => {
+    const m = buildReport({ exercises: [ex("a", "Loitonnus", 2)], logs, today: TODAY, days: 7 });
+    const row = m.exercises[0];
+    expect(row.target).toBe(7);
+    expect(row.completePct).toBe(43); /* the number a 3×/week exercise used to be stuck at */
+  });
+
+  it("reports over-delivery above 100 rather than silently capping it", () => {
+    const m = buildReport({ exercises: [ex("a", "Loitonnus", 2, { freq: 1 })], logs, today: TODAY, days: 7 });
+    expect(m.exercises[0].target).toBe(1);
+    expect(m.exercises[0].completePct).toBe(300);
+  });
+
+  it("carries the frequency into the report so the physio sees the prescription", () => {
+    const m = buildReport({ exercises: [ex("a", "Loitonnus", 2, { freq: 3 })], logs, today: TODAY, days: 7 });
+    expect(m.exercises[0].freqText).toBe("3× viikossa");
+    const html = reportBodyHTML(m, {});
+    expect(html).toContain("3× viikossa");
+    expect(reportText(m, {})).toContain("3× viikossa");
+  });
+
+  it("leaves the frequency out of the page when it is daily", () => {
+    const m = buildReport({ exercises: [ex("a", "Loitonnus", 2)], logs, today: TODAY, days: 7 });
+    expect(reportBodyHTML(m, {})).not.toContain("päivittäin");
+  });
+});
+
 describe("report symptoms and marks", () => {
   it("counts symptom days, mean severity and quality tallies", () => {
     const logs = {

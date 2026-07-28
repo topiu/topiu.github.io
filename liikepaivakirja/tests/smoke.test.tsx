@@ -150,3 +150,42 @@ describe("restore", () => {
     expect(q.getByText("Päiviä")).toBeTruthy();
   });
 });
+
+describe("one-tap programme", () => {
+  it("fills every exercise still owed, then offers a way back", async () => {
+    const { container } = render(<App />);
+    const q = within(container);
+    const btn = await waitFor(() => q.getByText("Merkitse ohjelma tehdyksi"));
+    fireEvent.click(btn);
+
+    /* the button is gone because nothing is owed any more, and the undo bar
+       replaces it rather than sitting alongside */
+    await waitFor(() => expect(q.getByText("Kumoa")).toBeTruthy());
+    expect(q.queryByText("Merkitse ohjelma tehdyksi")).toBeNull();
+    expect(q.getByText(/merkittiin tehdyksi/)).toBeTruthy();
+
+    fireEvent.click(q.getByText("Kumoa"));
+    await waitFor(() => expect(q.getByText("Merkitse ohjelma tehdyksi")).toBeTruthy());
+    expect(q.queryByText("Kumoa")).toBeNull();
+  });
+});
+
+describe("weekly prescription", () => {
+  it("shows a weekly counter once an exercise is set below daily", async () => {
+    const { container } = render(<App />);
+    const q = within(container);
+    await waitFor(() => expect(q.getAllByText("Muokkaa").length).toBeGreaterThan(0));
+    fireEvent.click(q.getAllByText("Muokkaa")[0]);
+
+    /* every exercise starts daily, so no counter is shown yet */
+    await waitFor(() => expect(q.getAllByText("päivittäin").length).toBeGreaterThan(0));
+    /* four taps down: 7 -> 3 */
+    const fewer = q.getAllByLabelText("Harvemmin")[0];
+    for (let i = 0; i < 4; i++) fireEvent.click(fewer);
+    await waitFor(() => expect(q.getAllByText("3× viikossa").length).toBeGreaterThan(0));
+
+    fireEvent.click(q.getAllByText("Tänään")[0]);
+    /* the badge reads done/target for the current week */
+    await waitFor(() => expect(q.getByText(/^\d+\/3 vk$/)).toBeTruthy());
+  });
+});

@@ -16,6 +16,7 @@
  */
 
 import { humanDate } from "./dates";
+import { FREQ_DAILY } from "./freq";
 import { PSFS_INTERVAL_DAYS, PSFS_MAX, PSFS_MDC_SINGLE, PSFS_MID, psfsBandLabel } from "./psfs";
 
 const esc = (v) =>
@@ -98,12 +99,13 @@ function exerciseTable(m) {
       const p = e.completePct == null ? 0 : e.completePct;
       const bar = `<span class="bar"><i style="width:${Math.min(100, p)}%"></i></span>`;
       const unit = e.unit === "min" ? "min" : "sarjaa";
+      const presc = [e.dose, e.freq < FREQ_DAILY ? e.freqText : ""].filter(Boolean).join(" · ");
       return `<tr>
-        <td>${esc(e.name)}${e.dose ? `<div class="sub">${esc(e.dose)}</div>` : ""}${
+        <td>${esc(e.name)}${presc ? `<div class="sub">${esc(presc)}</div>` : ""}${
         e.since ? `<div class="sub">mukana ${esc(shortKey(e.since))} alkaen</div>` : ""
       }</td>
         <td class="n">${bar}${e.completePct == null ? "–" : `${e.completePct} %`}</td>
-        <td class="n">${e.daysComplete}/${e.days}</td>
+        <td class="n">${e.daysComplete}/${e.target}</td>
         <td class="n">${e.unitsDone}/${e.unitsGoal} ${esc(unit)}</td>
         <td class="n">${e.over || ""}</td>
       </tr>`;
@@ -111,7 +113,7 @@ function exerciseTable(m) {
     .join("");
   return `<table>
     <thead><tr>
-      <th>Liike</th><th class="n">Toteutuma</th><th class="n">Täydet pv</th>
+      <th>Liike</th><th class="n">Toteutuma</th><th class="n">Kerrat</th>
       <th class="n">Määrä</th><th class="n">Yli annoksen</th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -265,7 +267,7 @@ export function reportBodyHTML(m, opts = {} as any) {
   }
 
   <div class="method">
-    <p><b>Miten luvut on laskettu.</b> Toteutuma vertaa tehtyä määrää siihen annokseen, joka oli voimassa kyseisenä päivänä — annoksen muuttaminen ei muuta historiaa. Liikkeen jakso alkaa päivästä, jona se ensimmäisen kerran kirjattiin, ei jakson alusta.</p>
+    <p><b>Miten luvut on laskettu.</b> Toteutuma vertaa tehtyä määrää siihen annokseen, joka oli voimassa kyseisenä päivänä — annoksen muuttaminen ei muuta historiaa. Liikkeen jakso alkaa päivästä, jona se ensimmäisen kerran kirjattiin, ei jakson alusta. <b>Kerrat</b> on toteutuneet kerrat suhteessa siihen, montako kertaa ohjeistus edellytti tällä jaksolla; päivittäisillä liikkeillä se on jakson päivien määrä, harvemmilla viikkotavoite jaksoon suhteutettuna.</p>
     <p><b>PSFS</b> (Patient-Specific Functional Scale): henkilön itse nimeämät toiminnot, asteikko 0 = en pysty lainkaan … ${PSFS_MAX} = pystyn kuten ennen vaivaa. Arvio ${PSFS_INTERVAL_DAYS} päivän välein. Keskiarvon merkittävän muutoksen raja-arvot ${PSFS_MID.small} (pieni), ${PSFS_MID.medium} (kohtalainen) ja ${PSFS_MID.large} (suuri); yksittäisen toiminnon pienin luotettavasti havaittava muutos on noin ${PSFS_MDC_SINGLE} pistettä.</p>
     <p>Kaikki tiedot ovat henkilön itsensä kirjaamia. Tämä ei ole diagnoosi eikä hoitosuositus.</p>
   </div>
@@ -334,7 +336,8 @@ export function reportText(m, opts = {} as any) {
   L.push("HARJOITTELU");
   m.exercises.forEach((e) => {
     const d = e.dose ? ` (${e.dose})` : "";
-    L.push(`- ${e.name}${d}: ${e.completePct == null ? "–" : e.completePct + " %"}, täydet ${e.daysComplete}/${e.days} pv${e.over ? `, yli annoksen ${e.over} pv` : ""}`);
+    const f = e.freq < FREQ_DAILY ? `, ${e.freqText}` : "";
+    L.push(`- ${e.name}${d}${f}: ${e.completePct == null ? "–" : e.completePct + " %"}, ${e.daysComplete}/${e.target} kertaa${e.over ? `, yli annoksen ${e.over} pv` : ""}`);
   });
 
   L.push("");

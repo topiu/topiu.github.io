@@ -54,6 +54,26 @@ export const goalMinOf = (l, ex) => {
   return targetMin(ex);
 };
 
+/* Was the day's target met? Shared by the daily view, the weekly progress
+   counter and the report, which previously each had their own copy of this and
+   could therefore disagree about what "done" means. */
+export const isCompleteOn = (l, ex) => {
+  if (!l || !ex) return false;
+  return isMin(ex) ? ((l.mins && l.mins[ex.id]) || 0) >= goalMinOf(l, ex) : ((l.sets && l.sets[ex.id]) || 0) >= goalOf(l, ex);
+};
+
+/* The full snapshot frozen into a day's log the first time an exercise is
+   logged, so later prescription changes cannot rewrite that day. `freq` rides
+   along in the same object: a change from 3× to 5× a week is a prescription
+   change like any other and history must survive it. */
+export const doseSnapshotOf = (ex) => ({
+  sets: ex ? targetSets(ex) : 1,
+  reps: toNum(ex && ex.dose && ex.dose.reps),
+  hold: toNum(ex && ex.dose && ex.dose.hold),
+  min: toNum(ex && ex.dose && ex.dose.min),
+  freq: ex && Number(ex.freq) >= 1 && Number(ex.freq) <= 7 ? Math.round(Number(ex.freq)) : 7,
+});
+
 export const isEmptyLog = (l) => {
   const noMins = !l.mins || Object.values(l.mins).every((v) => !v);
   const noSets = (!l.sets || Object.values(l.sets).every((v) => !v)) && noMins;

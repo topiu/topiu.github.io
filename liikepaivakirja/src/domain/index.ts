@@ -3,6 +3,7 @@ export * from "./dates";
 export * from "./defaults";
 export * from "./dose";
 export * from "./exportfmt";
+export * from "./freq";
 export * from "./library";
 export * from "./load";
 export * from "./normalize";

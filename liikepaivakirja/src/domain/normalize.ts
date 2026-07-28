@@ -1,6 +1,7 @@
 /* domain/normalize — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { DATE_RE } from "./dates";
-import { EMPTY_DOSE, isEmptyLog, targetSets } from "./dose";
+import { EMPTY_DOSE, doseSnapshotOf, isEmptyLog, targetSets } from "./dose";
+import { FREQ_DAILY, freqOf } from "./freq";
 import { SOURCES } from "./library";
 import { toNum, uid } from "./num";
 import { normalizePsfs } from "./psfs";
@@ -24,6 +25,9 @@ export function normalizeExercises(arr) {
     met: e && Number(e.met) > 0 ? Number(e.met) : null,
     source: e && e.source && SOURCES[e.source.src] ? { src: e.source.src, note: typeof e.source.note === "string" ? e.source.note.slice(0, 200) : "", edited: !!e.source.edited } : null,
     archived: !!(e && e.archived),
+    /* absent on every exercise created before frequencies existed; daily is
+       what those exercises effectively were */
+    freq: freqOf(e),
     dose:
       e && e.dose
         ? { sets: toNum(e.dose.sets), reps: toNum(e.dose.reps), hold: toNum(e.dose.hold), min: toNum(e.dose.min) }
@@ -115,10 +119,10 @@ export function normalizeLogs(raw, exById) {
           const g = l.goal[id];
           if (typeof g === "object" && g !== null) {
             const s = toNum(g.sets) || 1;
-            goal[id] = { sets: s, reps: toNum(g.reps), hold: toNum(g.hold), min: toNum(g.min) };
+            goal[id] = { sets: s, reps: toNum(g.reps), hold: toNum(g.hold), min: toNum(g.min), freq: toNum(g.freq) || FREQ_DAILY };
           } else {
             const s = parseInt(g, 10);
-            if (s > 0) goal[id] = { sets: s, reps: null, hold: null, min: null };
+            if (s > 0) goal[id] = { sets: s, reps: null, hold: null, min: null, freq: FREQ_DAILY };
           }
         });
       }
@@ -127,8 +131,8 @@ export function normalizeLogs(raw, exById) {
       Object.keys(sets).forEach((id) => {
         if (!goal[id]) {
           goal[id] = exById[id]
-            ? { sets: targetSets(exById[id]), reps: toNum(exById[id].dose && exById[id].dose.reps), hold: toNum(exById[id].dose && exById[id].dose.hold), min: toNum(exById[id].dose && exById[id].dose.min) }
-            : { sets: sets[id], reps: null, hold: null, min: null };
+            ? doseSnapshotOf(exById[id])
+            : { sets: sets[id], reps: null, hold: null, min: null, freq: FREQ_DAILY };
         }
       });
     } else if (Array.isArray(l.done)) {

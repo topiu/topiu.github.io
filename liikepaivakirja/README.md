@@ -10,7 +10,7 @@ the Capacitor shell, so none of this work is throwaway.
 ```bash
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 89 tests: domain invariants, backup logic, mount tests
+npm test               # 115 tests: domain invariants, backup logic, mount tests
 npm run build          # -> dist/         (GitHub Pages)
 npm run build:single   # -> dist-single/index.html (one portable file)
 npm run typecheck      # informational, see "Type checking" below
@@ -46,7 +46,8 @@ src/
   domain/      pure logic, no React, no platform APIs — fully typed, tested
                dates dose taxonomy regions structures library defaults
                steps normalize load exportfmt num
-               psfs report reportview restore    (+ index.ts barrel)
+               freq psfs report reportview restore
+                                                 (+ index.ts barrel)
   storage/     store.ts   IndexedDB, same contract as window.storage
                backup.ts  rolling daily snapshots
   platform/    download.ts  Blob download + clipboard
@@ -127,7 +128,12 @@ Three things the numbers do deliberately:
 
 1. Adherence is scored against the dose **in force on each day**, via the
    existing per-day snapshot. Changing a prescription never rewrites history.
-2. Each exercise's denominator starts the day it first appears in the log, not at
+2. The denominator is **what the prescription asked for**, not calendar days.
+   A 3×/week exercise over four weeks is scored out of 12. Before frequencies
+   existed the denominator was calendar days, which meant such an exercise could
+   never score above about 43 % however perfectly it was followed — a real defect,
+   not a rounding quirk. Over-delivery is reported above 100 % rather than capped.
+3. Each exercise's window starts the day it first appears in the log, not at
    the start of the range, so an exercise added last week does not read as three
    weeks of missed sessions. The page prints that start date.
 3. Nothing is interpreted. No trend arrows, no "improving", no advice. The single
@@ -193,6 +199,47 @@ promptly on iOS.
 If offline is attempted again it needs, before anything is deployed: a build flag
 so it can be disabled without a deploy, a visible "poista offline-tila" button in
 the app, and a manual test on a real Home Screen install.
+
+## Tiheys — "× viikossa"
+
+Every exercise used to be implicitly due every day. An exercise is now prescribed
+a weekly count from 1 to 7, set with the **Tiheys** stepper under Muokkaa. 7 means
+daily and is the default, so nothing that existed before this change behaves or
+scores differently.
+
+A weekly count rather than named weekdays, deliberately. "Three times this week"
+is how these prescriptions are actually given, it is less to configure, and naming
+the days would invent a notion of being *late* that the physiotherapist never
+prescribed.
+
+- On **Tänään**, an exercise below daily carries a `2/3 vk` badge — sessions
+  completed this Monday–Sunday week against the target. A session logged later in
+  the same week still counts toward that week.
+- Changing a frequency is annotated in the timeline exactly like a dose change,
+  and it is **snapshotted per day** alongside the dose. Raising 3× to 5× does not
+  retroactively turn completed weeks into missed ones.
+- The report scores against it; see the note above about the denominator.
+
+## Yhden napautuksen ohjelma
+
+**Merkitse ohjelma tehdyksi** on Tänään fills every exercise still owed to the
+dose in force today.
+
+Not "same as yesterday", which was the obvious version and the wrong one:
+yesterday may have been a partial day, and copying it forward quietly launders a
+missed session into the new normal. Today's prescription is the reference.
+
+Three rules that keep it honest:
+
+- It **never reduces** a value, so a deliberate overdrive entry survives.
+- It **skips anything whose weekly target is already met**. The button removes
+  friction; it is not there to talk anyone into extra sessions.
+- It **disappears when nothing is owed**, rather than sitting there greyed out. On
+  the one screen that has to stay fast, a control that does nothing is noise.
+
+A bulk write gets an undo: the exact log object from before the fill is held for
+nine seconds and restored wholesale, rather than trying to subtract what was
+added.
 
 ## Palautus
 
@@ -304,6 +351,10 @@ where the file went.
 - **A next-day pain field.** Discussed but not built: pain *during* / *right
   after* / *24 h after* a session, which is what a physio actually asks and what
   would sharpen the existing lag analysis.
+- **Planning future days.** Deliberately not built. A diary you can fill in
+  before the event stops being evidence, and the physiotherapist cannot tell an
+  intention from a record. If it is ever added, planned and actual have to be
+  visibly separate layers and planned must never count toward adherence.
 - **Charts in the report.** The PSFS grid is a table on purpose — it prints
   cleanly in black and white and survives being photocopied.
 - Any of the other big-screen analytics discussed separately.

@@ -1,6 +1,6 @@
 /* ui/App — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { EMPTY_DOSE, LIB_BY_ID, addDays, emptyLog, emptyPsfs, goalMinOf, goalOf, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizePsfs, normalizeSymptoms, psfsAddActivity, psfsForgetActivity, psfsRenameActivity, psfsRetireActivity, psfsSetScore, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid } from "../domain";
+import { EMPTY_DOSE, FREQ_DAILY, LIB_BY_ID, addDays, doseSnapshotOf, emptyLog, emptyPsfs, expectedSessions, freqLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizePsfs, normalizeSymptoms, psfsAddActivity, psfsForgetActivity, psfsRenameActivity, psfsRetireActivity, psfsSetScore, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid, weekProgress } from "../domain";
 import { deleteKey, hasStore, loadJSON, saveJSON, saveJSONDebounced, saveJSONNow } from "../storage/store";
 import { C, FONT } from "../styles/tokens";
 import { BackupBanner, BackupSettings } from "./Backup";
@@ -28,6 +28,8 @@ export default function App() {
   const [canUndoImport, setCanUndoImport] = useState(false);
   const [stepsOpen, setStepsOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [programUndo, setProgramUndo] = useState<any>(null);
+  const undoTimer = useRef<any>(null);
 
   const today = startOfToday();
   const selKey = keyOf(selected);
@@ -230,9 +232,7 @@ export default function App() {
         /* freeze the day's full dose to what's in force when first logged */
         if (!g[id]) {
           const ex = exercises.find((e) => e.id === id);
-          g[id] = ex
-            ? { sets: targetSets(ex), reps: toNum(ex.dose && ex.dose.reps), hold: toNum(ex.dose && ex.dose.hold) }
-            : { sets: 1, reps: null, hold: null };
+          g[id] = ex ? doseSnapshotOf(ex) : { sets: 1, reps: null, hold: null, min: null, freq: FREQ_DAILY };
         }
       }
       l.sets = map;
@@ -251,15 +251,84 @@ export default function App() {
         map[id] = Math.min(m, 1440);
         if (!g[id]) {
           const ex = exercises.find((e) => e.id === id);
-          g[id] = ex
-            ? { sets: targetSets(ex), reps: toNum(ex.dose && ex.dose.reps), hold: toNum(ex.dose && ex.dose.hold), min: toNum(ex.dose && ex.dose.min) }
-            : { sets: 1, reps: null, hold: null, min: null };
+          g[id] = ex ? doseSnapshotOf(ex) : { sets: 1, reps: null, hold: null, min: null, freq: FREQ_DAILY };
         }
       }
       l.mins = map;
       l.goal = g;
       return l;
     });
+
+  /* One tap fills every exercise still owed today to the dose in force today.
+     Today's prescription is the reference, not yesterday's log: copying a
+     partial day forward would quietly launder a missed session into a habit.
+     It never reduces a value, so a deliberate overdrive entry survives, and it
+     skips anything whose weekly target is already met — the button is for
+     removing friction, not for talking you into extra sessions. */
+  const completeProgram = useCallback(() => {
+    const cur = logs[selKey] || emptyLog();
+    const before = logs[selKey] ? JSON.parse(JSON.stringify(logs[selKey])) : null;
+
+    /* Decide everything here, synchronously, against the committed log. The
+       first version of this counted the fills inside the setLogs updater, which
+       React runs during render rather than during the event — so the count was
+       always zero by the time it was read and the undo bar never appeared. */
+    const addSets = {};
+    const addMins = {};
+    const addGoal = {};
+    let filled = 0;
+    exercises.forEach((ex) => {
+      if (ex.archived) return;
+      if (isCompleteOn(cur, ex)) return;
+      if (freqOf(ex) < FREQ_DAILY && weekProgress(logs, ex, selKey).met) return;
+      const snap = (cur.goal && cur.goal[ex.id]) || doseSnapshotOf(ex);
+      const probe = { goal: { [ex.id]: snap } };
+      if (isMin(ex)) {
+        const want = goalMinOf(probe, ex);
+        if (((cur.mins && cur.mins[ex.id]) || 0) < want) {
+          addMins[ex.id] = want;
+          addGoal[ex.id] = snap;
+          filled++;
+        }
+      } else {
+        const want = goalOf(probe, ex);
+        if (((cur.sets && cur.sets[ex.id]) || 0) < want) {
+          addSets[ex.id] = want;
+          addGoal[ex.id] = snap;
+          filled++;
+        }
+      }
+    });
+    if (!filled) return;
+
+    updateLog(selKey, (l) => {
+      l.sets = { ...l.sets, ...addSets };
+      l.mins = { ...l.mins, ...addMins };
+      /* an existing snapshot always wins: this must not re-freeze a day */
+      l.goal = { ...addGoal, ...l.goal };
+      return l;
+    });
+
+    if (undoTimer.current) window.clearTimeout(undoTimer.current);
+    setProgramUndo({ key: selKey, log: before, filled });
+    undoTimer.current = window.setTimeout(() => setProgramUndo(null), 9000);
+  }, [exercises, logs, selKey, updateLog]);
+
+  /* A bulk write deserves a way back. Restores the exact log object captured
+     before the fill, rather than trying to subtract what was added. */
+  const undoProgram = useCallback(() => {
+    const u = programUndo;
+    if (!u) return;
+    if (undoTimer.current) window.clearTimeout(undoTimer.current);
+    setProgramUndo(null);
+    setLogs((prev) => {
+      const map = { ...prev };
+      if (u.log) map[u.key] = u.log;
+      else delete map[u.key];
+      saveJSON("physio-logs", map);
+      return map;
+    });
+  }, [programUndo]);
 
   const toggleSymptom = (id) =>
     updateLog(selKey, (l) => {
@@ -314,6 +383,14 @@ export default function App() {
     mutateList("ex", (arr) => arr.map((i) => (i.id === id ? { ...i, dose: { ...i.dose, [field]: toNum(raw) } } : i)), true);
   const setDesc = (id, desc) =>
     mutateList("ex", (arr) => arr.map((i) => (i.id === id ? { ...i, desc: desc.slice(0, 1000) } : i)), true);
+  /* A frequency change is a prescription change, so it is annotated in the
+     timeline the same way a dose change is. */
+  const setFreq = (id, f) => {
+    const ex = exercises.find((e) => e.id === id);
+    const next = Math.max(1, Math.min(FREQ_DAILY, Math.round(Number(f) || FREQ_DAILY)));
+    if (ex && freqOf(ex) !== next) logDoseChange(ex.name, freqLabel(freqOf(ex)), freqLabel(next));
+    mutateList("ex", (arr) => arr.map((i) => (i.id === id ? { ...i, freq: next } : i)));
+  };
   const setExType = (id, type) =>
     mutateList("ex", (arr) => arr.map((i) => (i.id === id ? { ...i, type } : i)));
   /* tap cycles: none → primary → secondary → light → none */
@@ -550,6 +627,10 @@ export default function App() {
             psfsRename={psfsRename}
             psfsRetire={psfsRetire}
             psfsForget={psfsForget}
+            logs={logs}
+            completeProgram={completeProgram}
+            programUndo={programUndo}
+            undoProgram={undoProgram}
           />
         )}
 
@@ -593,6 +674,7 @@ export default function App() {
             archiveItem={archiveItem}
             addFromLibrary={addFromLibrary}
             logDoseChange={logDoseChange}
+            setFreq={setFreq}
           />
         )}
 

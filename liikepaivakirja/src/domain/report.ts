@@ -23,7 +23,8 @@
  */
 
 import { addDays, keyOf, parseKey } from "./dates";
-import { doseLabel, goalMinOf, goalOf, isMin } from "./dose";
+import { doseLabel, goalMinOf, goalOf, isCompleteOn, isMin } from "./dose";
+import { FREQ_DAILY, expectedSessions, freqLabel, freqOf } from "./freq";
 import { psfsActivityChanges, psfsChange, psfsSeries } from "./psfs";
 import { SEVERITY, qualityLabel } from "./taxonomy";
 
@@ -41,11 +42,6 @@ function firstSeenOf(logs, exId) {
     if (touched && (first == null || k < first)) first = k;
   });
   return first;
-}
-
-function completeOn(l, ex) {
-  if (!l) return false;
-  return isMin(ex) ? ((l.mins && l.mins[ex.id]) || 0) >= goalMinOf(l, ex) : ((l.sets && l.sets[ex.id]) || 0) >= goalOf(l, ex);
 }
 
 /* days: a positive window, or 0 for "everything on record" */
@@ -96,8 +92,13 @@ export function buildReport({ exercises = [], symptoms = [], logs = {}, marks = 
       unitsDone += got;
       unitsGoal += want;
     });
+    /* Denominator is what the prescription asked for over this window, not the
+       number of calendar days. For a daily exercise the two are the same; for
+       anything less frequent, calendar days made a perfect record look like a
+       failure — a 3×/week exercise could not exceed about 43 %. */
+    const target = expectedSessions(logs, ex, keys);
     doneSum += daysComplete;
-    denomSum += keys.length;
+    denomSum += target;
     return {
       id: ex.id,
       name: ex.name,
@@ -105,10 +106,13 @@ export function buildReport({ exercises = [], symptoms = [], logs = {}, marks = 
       unit: isMin(ex) ? "min" : "sets",
       dose: doseLabel(ex.dose, ex.unit),
       since: since > startKey ? since : null,
+      freq: freqOf(ex),
+      freqText: freqLabel(freqOf(ex)),
       days: keys.length,
+      target,
       daysAny,
       daysComplete,
-      completePct: pct(daysComplete, keys.length),
+      completePct: pct(daysComplete, target),
       over,
       unitsDone,
       unitsGoal,
@@ -123,7 +127,7 @@ export function buildReport({ exercises = [], symptoms = [], logs = {}, marks = 
     const l = logs[k];
     if (!l) return;
     loggedDays++;
-    const done = activeEx.filter((ex) => completeOn(l, ex)).length;
+    const done = activeEx.filter((ex) => isCompleteOn(l, ex)).length;
     if (done > 0) trainedDays++;
     if (activeEx.length && done === activeEx.length) fullDays++;
   });

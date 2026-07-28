@@ -1,7 +1,7 @@
 /* ui/Edit — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useRef } from "react";
-import { ChevronRight, X, ArrowUp, ArrowDown, Archive, ArchiveRestore, BookOpen } from "lucide-react";
-import { EX_TYPES, SIDES, doseLabel, isMin, regionName, structName } from "../domain";
+import { ChevronRight, X, ArrowUp, ArrowDown, Archive, ArchiveRestore, BookOpen, Minus, Plus } from "lucide-react";
+import { EX_TYPES, SIDES, doseLabel, isMin, regionName, structName, FREQ_DAILY, FREQ_MIN, freqLabel, freqOf} from "../domain";
 import { C } from "../styles/tokens";
 import { RegionPicker } from "./BodyMap";
 import { LibraryModal, SourceBadge } from "./Library";
@@ -10,7 +10,7 @@ import { AddRow, Card, MiniBtn, NumField, ResetBtn, SectionLabel } from "./commo
 /* ================================================================== */
 /*  EDIT                                                               */
 /* ================================================================== */
-export function EditView({ exercises, symptoms, renameItem, setDose, setDesc, setExType, cycleExMuscle, toggleSymRegion, toggleExStructure, toggleSymStructure, addItem, removeItem, moveItem, resetList, archiveItem, addFromLibrary, logDoseChange }) {
+export function EditView({ exercises, symptoms, renameItem, setDose, setFreq, setDesc, setExType, cycleExMuscle, toggleSymRegion, toggleExStructure, toggleSymStructure, addItem, removeItem, moveItem, resetList, archiveItem, addFromLibrary, logDoseChange }) {
   const [exDraft, setExDraft] = useState("");
   const [syDraft, setSyDraft] = useState("");
   const [picker, setPicker] = useState(null); // { kind:'ex'|'sy', id }
@@ -75,6 +75,7 @@ export function EditView({ exercises, symptoms, renameItem, setDose, setDesc, se
                 {doseLabel(e.dose, e.unit) || "ei annosta"}
               </span>
             </div>
+            <FreqField value={freqOf(e)} onChange={(v) => setFreq(e.id, v)} />
             <textarea
               value={e.desc || ""}
               onChange={(ev) => setDesc(e.id, ev.target.value)}
@@ -205,5 +206,35 @@ export function ArchivedList({ which, items, restore, remove }) {
         </div>
       </Card>
     </>
+  );
+}
+
+/* Frequency as a stepper rather than seven buttons: it needs to fit beside the
+   dose fields on a phone, the range is small, and "päivittäin" reads better than
+   a 7 that the user has to interpret. 7 is the default, so an exercise that was
+   never given a frequency behaves exactly as it did before. */
+function FreqField({ value, onChange }) {
+  const step = (d) => {
+    const next = Math.max(FREQ_MIN, Math.min(FREQ_DAILY, value + d));
+    if (next !== value) onChange(next);
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <span style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: C.inkSoft, fontWeight: 700 }}>
+        Tiheys
+      </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 2, marginLeft: "auto" }}>
+        <MiniBtn label="Harvemmin" disabled={value <= FREQ_MIN} onClick={() => step(-1)}>
+          <Minus size={15} />
+        </MiniBtn>
+        <span
+          style={{ minWidth: 92, textAlign: "center", fontSize: 13, fontWeight: 600, color: value < FREQ_DAILY ? C.pineDeep : C.inkSoft, fontVariantNumeric: "tabular-nums" }}>
+          {freqLabel(value)}
+        </span>
+        <MiniBtn label="Useammin" disabled={value >= FREQ_DAILY} onClick={() => step(1)}>
+          <Plus size={15} />
+        </MiniBtn>
+      </div>
+    </div>
   );
 }
