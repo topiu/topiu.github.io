@@ -707,6 +707,246 @@ function snapPoint(p, doc, grid, tol, prev) {
   return out;
 }
 
+/* ---------------- room shape helpers ---------------- */
+
+function polySigned(pts) {
+  let a = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) a += pts[j].x * pts[i].y - pts[i].x * pts[j].y;
+  return a / 2;
+}
+/* interior angle at corner i, in degrees (reflex corners read above 180) */
+function interiorAngle(pts, i) {
+  const n = pts.length;
+  const a = pts[(i - 1 + n) % n],
+    b = pts[i],
+    c = pts[(i + 1) % n];
+  let ang = (Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x)) / D2R;
+  while (ang < 0) ang += 360;
+  while (ang >= 360) ang -= 360;
+  return polySigned(pts) > 0 ? 360 - ang : ang;
+}
+const nearMultiple = (deg, step, tol) => Math.abs(deg - Math.round(deg / step) * step) < tol;
+
+/* mitred parallel offset; d>0 and d<0 give the two sides */
+function offsetPoly(pts, d) {
+  const n = pts.length,
+    out = [];
+  const unit = (a, b) => {
+    const dx = b.x - a.x,
+      dy = b.y - a.y,
+      L = Math.hypot(dx, dy) || 1;
+    return {
+      x: dx / L,
+      y: dy / L
+    };
+  };
+  for (let i = 0; i < n; i++) {
+    const p0 = pts[(i - 1 + n) % n],
+      p1 = pts[i],
+      p2 = pts[(i + 1) % n];
+    const u1 = unit(p0, p1),
+      u2 = unit(p1, p2);
+    const n1 = {
+        x: -u1.y,
+        y: u1.x
+      },
+      n2 = {
+        x: -u2.y,
+        y: u2.x
+      };
+    const cross = u1.x * u2.y - u1.y * u2.x;
+    if (Math.abs(cross) < 1e-9) {
+      out.push({
+        x: p1.x + n1.x * d,
+        y: p1.y + n1.y * d
+      });
+      continue;
+    }
+    const a1 = {
+      x: p0.x + n1.x * d,
+      y: p0.y + n1.y * d
+    };
+    const a2 = {
+      x: p1.x + n2.x * d,
+      y: p1.y + n2.y * d
+    };
+    const t = ((a2.x - a1.x) * u2.y - (a2.y - a1.y) * u2.x) / cross;
+    const q = {
+      x: a1.x + u1.x * t,
+      y: a1.y + u1.y * t
+    };
+    // a very sharp corner can throw the mitre miles away; fall back to a plain offset
+    const far = Math.hypot(q.x - p1.x, q.y - p1.y) > Math.abs(d) * 6 + 1;
+    out.push(far ? {
+      x: p1.x + n1.x * d,
+      y: p1.y + n1.y * d
+    } : q);
+  }
+  return out;
+}
+/* centrelines for walls wrapped around a room */
+function roomWallLines(room, t, mode) {
+  const pts = room.points;
+  if (!pts || pts.length < 3) return [];
+  if (mode === "centre") return pts;
+  const A = offsetPoly(pts, t / 2),
+    B = offsetPoly(pts, -t / 2);
+  const inner = Math.abs(polySigned(A)) < Math.abs(polySigned(B)) ? A : B;
+  const outer = inner === A ? B : A;
+  return mode === "inside" ? inner : outer;
+}
+/* Regenerate the walls belonging to a room. Wall ids are reused per edge so
+   doors and windows stay attached while the room is being reshaped. */
+function rebuildRoomWalls(doc, room) {
+  const mine = doc.walls.filter(w => w.room === room.id);
+  const others = doc.walls.filter(w => w.room !== room.id);
+  const cfg = room.autoWalls;
+  if (!cfg || !cfg.mode || cfg.mode === "none") {
+    const gone = new Set(mine.map(w => w.id));
+    return {
+      ...doc,
+      walls: others,
+      openings: doc.openings.filter(o => !gone.has(o.wallId))
+    };
+  }
+  const line = roomWallLines(room, cfg.t, cfg.mode);
+  const made = line.map((p, i) => {
+    const q = line[(i + 1) % line.length];
+    const prev = mine.find(w => w.edge === i);
+    return {
+      id: prev ? prev.id : uid(),
+      room: room.id,
+      edge: i,
+      x1: p.x,
+      y1: p.y,
+      x2: q.x,
+      y2: q.y,
+      t: cfg.t
+    };
+  });
+  const live = new Map(made.map(w => [w.id, w]));
+  const openings = doc.openings.filter(o => live.has(o.wallId) || !mine.some(w => w.id === o.wallId)).map(o => {
+    const w = live.get(o.wallId);
+    if (!w) return o;
+    const L = Math.hypot(w.x2 - w.x1, w.y2 - w.y1);
+    const wid = Math.min(o.w, Math.max(L - 20, 100));
+    return {
+      ...o,
+      w: wid,
+      off: clamp(o.off, 0, Math.max(0, L - wid))
+    };
+  });
+  return {
+    ...doc,
+    walls: [...others, ...made],
+    openings
+  };
+}
+const withAutoWalls = (doc, roomId) => {
+  const r = doc.rooms.find(x => x.id === roomId);
+  return r && r.autoWalls ? rebuildRoomWalls(doc, r) : doc;
+};
+
+/* Snap a room corner. Angle candidates win over the plain grid, so corners
+   settle onto 45° and 90° rather than near them. */
+function snapRoomVertex(p, pts, i, doc, grid, tol) {
+  const n = pts.length;
+  const A = pts[(i - 1 + n) % n],
+    B = pts[(i + 1) % n];
+
+  // 1. existing corners and wall ends snap exactly
+  const verts = [];
+  for (const w of doc.walls) verts.push({
+    x: w.x1,
+    y: w.y1
+  }, {
+    x: w.x2,
+    y: w.y2
+  });
+  for (const r of doc.rooms) r.points.forEach((v, k) => {
+    if (!(r.points === pts && k === i)) verts.push(v);
+  });
+  let best = null,
+    bd = tol;
+  for (const v of verts) {
+    const d = Math.hypot(v.x - p.x, v.y - p.y);
+    if (d < bd) {
+      bd = d;
+      best = {
+        x: v.x,
+        y: v.y,
+        kind: "vertex"
+      };
+    }
+  }
+  if (best) return best;
+
+  // 2. where a 15° direction off each neighbour crosses — both edges land square
+  const dirs = [];
+  for (let a = 0; a < 360; a += 15) dirs.push({
+    x: Math.cos(a * D2R),
+    y: Math.sin(a * D2R)
+  });
+  let pick = null,
+    pd = tol;
+  for (const d1 of dirs) for (const d2 of dirs) {
+    const cross = d1.x * d2.y - d1.y * d2.x;
+    if (Math.abs(cross) < 1e-6) continue;
+    const t = ((B.x - A.x) * d2.y - (B.y - A.y) * d2.x) / cross;
+    if (t < 1) continue;
+    const q = {
+      x: A.x + d1.x * t,
+      y: A.y + d1.y * t
+    };
+    if ((q.x - B.x) * d2.x + (q.y - B.y) * d2.y < 1) continue;
+    const d = Math.hypot(q.x - p.x, q.y - p.y);
+    if (d < pd) {
+      pd = d;
+      pick = q;
+    }
+  }
+  if (pick) return {
+    x: pick.x,
+    y: pick.y,
+    kind: "angle"
+  };
+
+  // 3. failing that, line up just one edge
+  pd = tol;
+  for (const base of [A, B]) {
+    for (const d of dirs) {
+      const t = (p.x - base.x) * d.x + (p.y - base.y) * d.y;
+      if (t < 1) continue;
+      const q = {
+        x: base.x + d.x * t,
+        y: base.y + d.y * t
+      };
+      const dd = Math.hypot(q.x - p.x, q.y - p.y);
+      if (dd < pd) {
+        pd = dd;
+        pick = q;
+      }
+    }
+  }
+  if (pick) return {
+    x: pick.x,
+    y: pick.y,
+    kind: "angle"
+  };
+
+  // 4. plain grid
+  if (grid) return {
+    x: Math.round(p.x / grid) * grid,
+    y: Math.round(p.y / grid) * grid,
+    kind: "grid"
+  };
+  return {
+    x: p.x,
+    y: p.y,
+    kind: null
+  };
+}
+
 /* ---------------- ceilings & headroom ---------------- */
 
 const defaultCeiling = () => ({
@@ -885,6 +1125,33 @@ const STR = {
     quotaFull: "Not enough room in browser storage for that image. Try a smaller one, or delete an old plan.",
     restored: "Backup restored.",
     badBackup: "That file isn't a Mökkipohja backup.",
+    view3d: "3D",
+    orbit: "Orbit",
+    walk: "Walk",
+    roofOn: "Roof",
+    orbitHint: "Drag to turn · pinch to zoom · two fingers to pan",
+    walkHint: "Drag the view to look · stick to move · +/− for height",
+    sill: "Sill",
+    head: "Head",
+    wallHeight: "Wall height",
+    noGpu: "software rendering — depth may be approximate",
+    invertDrag: "Invert",
+    keysHint: "WASD move · Q/E height · Shift faster · arrows look · Esc closes",
+    shape: "Shape",
+    wallsTab: "Walls",
+    corner: "Corner",
+    delCorner: "Delete corner",
+    shapeHint: "Drag a solid handle to move a corner. Tap a hollow one to add a corner.",
+    autoWall: "Wall around room",
+    none: "None",
+    inside: "Inside",
+    centre: "Centre",
+    outside: "Outside",
+    edgePrev: "Edge in",
+    edgeNext: "Edge out",
+    cornerAngle: "Angle",
+    of: "of",
+    keepsDoors: "Doors and windows stay put while you reshape the room.",
     g: {
       sleep: "Sleeping",
       live: "Living",
@@ -1030,6 +1297,33 @@ const STR = {
     quotaFull: "Selaimen tallennustila ei riitä tälle kuvalle. Kokeile pienempää kuvaa tai poista vanha pohja.",
     restored: "Varmuuskopio palautettu.",
     badBackup: "Tiedosto ei ole Mökkipohja-varmuuskopio.",
+    view3d: "3D",
+    orbit: "Kierto",
+    walk: "Kävely",
+    roofOn: "Katto",
+    orbitHint: "Vedä kääntääksesi · nipistä zoomataksesi · kahdella sormella siirto",
+    walkHint: "Vedä näkymää katsellaksesi · sauva liikkuu · +/− korkeus",
+    sill: "Alareuna",
+    head: "Yläreuna",
+    wallHeight: "Seinän korkeus",
+    noGpu: "ohjelmistopiirto — syvyys voi olla likimääräinen",
+    invertDrag: "Käännä",
+    keysHint: "WASD liike · Q/E korkeus · Shift nopeammin · nuolet katse · Esc sulkee",
+    shape: "Muoto",
+    wallsTab: "Seinät",
+    corner: "Kulma",
+    delCorner: "Poista kulma",
+    shapeHint: "Vedä täytetystä kahvasta siirtääksesi kulmaa. Napauta ontosta lisätäksesi kulman.",
+    autoWall: "Seinä huoneen ympäri",
+    none: "Ei seinää",
+    inside: "Sisäpuolelle",
+    centre: "Keskelle",
+    outside: "Ulkopuolelle",
+    edgePrev: "Sivu ennen",
+    edgeNext: "Sivu jälkeen",
+    cornerAngle: "Kulma",
+    of: "/",
+    keepsDoors: "Ovet ja ikkunat pysyvät paikoillaan huonetta muokatessa.",
     g: {
       sleep: "Makuu",
       live: "Oleskelu",
@@ -1732,6 +2026,13 @@ function Glyph({
       d: "M8 7.5 12 3l4 4.5"
     }), /*#__PURE__*/React.createElement("path", {
       d: "M3.5 15v4.5h17V15"
+    })),
+    cube: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+      d: "M12 2.6 21 7.4v9.2L12 21.4 3 16.6V7.4Z"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M3 7.4 12 12l9-4.6"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M12 12v9.4"
     }))
   };
   return /*#__PURE__*/React.createElement("svg", common, paths[name]);
@@ -2216,6 +2517,1225 @@ function ShapeEditor({
 }
 
 /* ============================================================
+   3D — flat-shaded painter's algorithm straight onto canvas 2D.
+   No WebGL, no three.js: the scene is a few hundred convex faces,
+   which sorts and fills fast and keeps the standalone file small.
+   Plan Y points south; 3D world negates it so Z-up is right-handed.
+   ============================================================ */
+
+const C3 = {
+  sky1: "#9FB4C2",
+  sky2: "#D7DFE2",
+  ground: "#AFB79C",
+  floor: "#CBBFA2",
+  roof: "#7E8A80",
+  wall: "#DBD6C7",
+  wallTop: "#BFB9A6",
+  reveal: "#C6C0AE",
+  grp: {
+    sleep: "#7C93A8",
+    live: "#C3924F",
+    kitchen: "#8FA86B",
+    heat: "#B4602F",
+    sauna: "#A87F52",
+    store: "#8C8C7A",
+    custom: "#9A8FB0"
+  },
+  bad: "#B4402F"
+};
+const DEF_WALL_H = 2500;
+const openSill = o => o.sill != null ? o.sill : o.kind === "door" ? 0 : 900;
+const openHead = o => o.head != null ? o.head : o.kind === "door" ? 2050 : 1800;
+function hex2rgb(h) {
+  return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+}
+function shadeCss(hex, k) {
+  const [r, g, b] = hex2rgb(hex);
+  const f = v => Math.round(clamp(v * k, 0, 255));
+  return `rgb(${f(r)},${f(g)},${f(b)})`;
+}
+function pointInTri(p, a, b, c) {
+  const d1 = (p.x - b.x) * (a.y - b.y) - (a.x - b.x) * (p.y - b.y);
+  const d2 = (p.x - c.x) * (b.y - c.y) - (b.x - c.x) * (p.y - c.y);
+  const d3 = (p.x - a.x) * (c.y - a.y) - (c.x - a.x) * (p.y - a.y);
+  const neg = d1 < 0 || d2 < 0 || d3 < 0,
+    pos = d1 > 0 || d2 > 0 || d3 > 0;
+  return !(neg && pos);
+}
+/* ear clipping; simple polygons, either winding, concave allowed */
+function triangulate(poly) {
+  const n = poly.length;
+  if (n < 3) return [];
+  if (n === 3) return [[0, 1, 2]];
+  const s = polySigned(poly) > 0 ? 1 : -1;
+  const idx = [...Array(n).keys()];
+  const tris = [];
+  let guard = 0;
+  while (idx.length > 3 && guard++ < 5000) {
+    let cut = false;
+    for (let i = 0; i < idx.length; i++) {
+      const m = idx.length;
+      const ia = idx[(i - 1 + m) % m],
+        ib = idx[i],
+        ic = idx[(i + 1) % m];
+      const A = poly[ia],
+        B = poly[ib],
+        Cc = poly[ic];
+      const cross = (B.x - A.x) * (Cc.y - A.y) - (B.y - A.y) * (Cc.x - A.x);
+      if (cross * s <= 0) continue; // reflex vertex: not an ear
+      let ok = true;
+      for (const j of idx) {
+        if (j === ia || j === ib || j === ic) continue;
+        if (pointInTri(poly[j], A, B, Cc)) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+      tris.push([ia, ib, ic]);
+      idx.splice(i, 1);
+      cut = true;
+      break;
+    }
+    if (!cut) break;
+  }
+  if (idx.length === 3) tris.push([idx[0], idx[1], idx[2]]);
+  return tris;
+}
+/* keep the part of a polygon on one side of an axis-aligned line */
+function clipHalf(poly, axis, value, keepBelow) {
+  const inside = p => keepBelow ? (axis === "x" ? p.x : p.y) <= value : (axis === "x" ? p.x : p.y) >= value;
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i],
+      b = poly[(i + 1) % poly.length];
+    const ai = inside(a),
+      bi = inside(b);
+    if (ai) out.push(a);
+    if (ai !== bi) {
+      const av = axis === "x" ? a.x : a.y,
+        bv = axis === "x" ? b.x : b.y;
+      const tt = (value - av) / (bv - av || 1);
+      out.push({
+        x: a.x + (b.x - a.x) * tt,
+        y: a.y + (b.y - a.y) * tt
+      });
+    }
+  }
+  return out;
+}
+function faceNormal(pts) {
+  let nx = 0,
+    ny = 0,
+    nz = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i],
+      b = pts[(i + 1) % pts.length];
+    nx += (a.y - b.y) * (a.z + b.z);
+    ny += (a.z - b.z) * (a.x + b.x);
+    nz += (a.x - b.x) * (a.y + b.y);
+  }
+  const L = Math.hypot(nx, ny, nz) || 1;
+  return {
+    x: nx / L,
+    y: ny / L,
+    z: nz / L
+  };
+}
+const SUN = (() => {
+  const v = {
+    x: -0.35,
+    y: -0.55,
+    z: 0.76
+  };
+  const L = Math.hypot(v.x, v.y, v.z);
+  return {
+    x: v.x / L,
+    y: v.y / L,
+    z: v.z / L
+  };
+})();
+function litFace(pts, hex, layer) {
+  const n = faceNormal(pts);
+  const d = Math.abs(n.x * SUN.x + n.y * SUN.y + n.z * SUN.z);
+  const k = 0.62 + 0.5 * d;
+  const [r, g, b] = hex2rgb(hex);
+  const rr = clamp(r * k, 0, 255),
+    gg = clamp(g * k, 0, 255),
+    bb = clamp(b * k, 0, 255);
+  return {
+    pts,
+    layer: layer || 1,
+    css: `rgb(${Math.round(rr)},${Math.round(gg)},${Math.round(bb)})`,
+    rgb: [rr / 255, gg / 255, bb / 255]
+  };
+}
+
+/* ---- scene assembly ---- */
+
+function wallTopFn(wall, doc) {
+  const room = wall.room ? doc.rooms.find(r => r.id === wall.room) : null;
+  if (room) {
+    const c = room.ceiling || defaultCeiling();
+    if (c.mode !== "flat") return {
+      f: p => ceilingAt(room, p),
+      sloped: true
+    };
+    return {
+      f: () => c.h,
+      sloped: false
+    };
+  }
+  const h = wall.h || doc.wallH || DEF_WALL_H;
+  return {
+    f: () => h,
+    sloped: false
+  };
+}
+function buildScene(doc, defs, opts) {
+  const faces = [];
+  const W = (p, z) => ({
+    x: p.x,
+    y: -p.y,
+    z
+  });
+  const push = (pts, hex, layer) => {
+    if (pts.length >= 3) faces.push(litFace(pts, hex, layer));
+  };
+
+  // ground plane, so there is a horizon to orient against
+  const all = [];
+  for (const w of doc.walls) all.push(...wallPoly(w));
+  for (const r of doc.rooms) all.push(...r.points);
+  const b = all.length ? bbox(all) : {
+    cx: 0,
+    cy: 0,
+    w: 6000,
+    h: 6000
+  };
+  const pad = Math.max(b.w, b.h) * 1.5 + 6000;
+  push([W({
+    x: b.cx - pad,
+    y: b.cy - pad
+  }, 0), W({
+    x: b.cx + pad,
+    y: b.cy - pad
+  }, 0), W({
+    x: b.cx + pad,
+    y: b.cy + pad
+  }, 0), W({
+    x: b.cx - pad,
+    y: b.cy + pad
+  }, 0)], C3.ground, -1);
+
+  // floors
+  for (const r of doc.rooms) {
+    for (const tri of triangulate(r.points)) push(tri.map(i => W(r.points[i], 1)), C3.floor, 0);
+  }
+
+  // ceiling / roof surface
+  if (opts.roof) {
+    for (const r of doc.rooms) {
+      const c = r.ceiling || defaultCeiling();
+      let parts = [r.points];
+      if (c.mode === "gable") {
+        const rb = bbox(r.points);
+        const a0 = c.axis === "x" ? rb.x0 : rb.y0,
+          a1 = c.axis === "x" ? rb.x1 : rb.y1;
+        const rp = a0 + (a1 - a0) * (c.ridge ?? 0.5);
+        parts = [clipHalf(r.points, c.axis, rp, true), clipHalf(r.points, c.axis, rp, false)];
+      }
+      for (const poly of parts) {
+        if (poly.length < 3) continue;
+        for (const tri of triangulate(poly)) push(tri.map(i => W(poly[i], ceilingAt(r, poly[i]))), C3.roof);
+      }
+    }
+  }
+
+  // walls, with real openings cut through them
+  if (opts.walls) {
+    for (const wl of doc.walls) {
+      const L = Math.hypot(wl.x2 - wl.x1, wl.y2 - wl.y1);
+      if (L < 1) continue;
+      const ux = (wl.x2 - wl.x1) / L,
+        uy = (wl.y2 - wl.y1) / L;
+      const nx = -uy,
+        ny = ux,
+        t = wl.t;
+      const {
+        f: topAt,
+        sloped
+      } = wallTopFn(wl, doc);
+      const H = u => Math.max(200, topAt({
+        x: wl.x1 + ux * u,
+        y: wl.y1 + uy * u
+      }));
+      const P = (u, v, z) => ({
+        x: wl.x1 + ux * u + nx * v,
+        y: -(wl.y1 + uy * u + ny * v),
+        z
+      });
+      const ops = doc.openings.filter(o => o.wallId === wl.id).map(o => {
+        const a = clamp(o.off, 0, L),
+          b2 = clamp(o.off + o.w, 0, L);
+        // a low eave wall can be shorter than the opening wants to be
+        const roof = Math.min(H(a), H(b2), H((a + b2) / 2));
+        return {
+          a,
+          b: b2,
+          s: openSill(o),
+          h: Math.min(openHead(o), roof - 20)
+        };
+      }).filter(o => o.b - o.a > 1 && o.h > o.s + 10).sort((p, q) => p.a - q.a);
+      const panel = (u0, u1, zb, topOf, capTop) => {
+        const K = opts.subdiv ? clamp(Math.ceil((u1 - u0) / opts.subdiv), 1, 30) : 1;
+        for (let k = 0; k < K; k++) {
+          const a = u0 + (u1 - u0) * k / K,
+            c2 = u0 + (u1 - u0) * (k + 1) / K;
+          const ha = Math.max(zb, topOf(a)),
+            hb = Math.max(zb, topOf(c2));
+          if (ha - zb < 0.5 && hb - zb < 0.5) continue;
+          push([P(a, t / 2, zb), P(c2, t / 2, zb), P(c2, t / 2, hb), P(a, t / 2, ha)], C3.wall);
+          push([P(a, -t / 2, zb), P(c2, -t / 2, zb), P(c2, -t / 2, hb), P(a, -t / 2, ha)], C3.wall);
+          if (capTop) push([P(a, t / 2, ha), P(c2, t / 2, hb), P(c2, -t / 2, hb), P(a, -t / 2, ha)], C3.wallTop);
+        }
+      };
+      const cuts = [0];
+      for (const o of ops) cuts.push(o.a, o.b);
+      cuts.push(L);
+      // land a vertex exactly on the ridge, or the gable peak comes out flattened
+      const rm = wl.room ? doc.rooms.find(r => r.id === wl.room) : null;
+      const rc = rm && rm.ceiling && rm.ceiling.mode === "gable" ? rm.ceiling : null;
+      if (rc) {
+        const rb = bbox(rm.points);
+        const a0 = rc.axis === "x" ? rb.x0 : rb.y0,
+          a1 = rc.axis === "x" ? rb.x1 : rb.y1;
+        const rp = a0 + (a1 - a0) * (rc.ridge ?? 0.5);
+        const dd = rc.axis === "x" ? ux : uy;
+        const s0 = rc.axis === "x" ? wl.x1 : wl.y1;
+        if (Math.abs(dd) > 1e-6) {
+          const ur = (rp - s0) / dd;
+          // but never inside an opening, or the hole would be sealed back up
+          if (ur > 1 && ur < L - 1 && !ops.some(o => ur > o.a - 0.5 && ur < o.b + 0.5)) cuts.push(ur);
+        }
+      }
+      cuts.sort((p, q) => p - q);
+      for (let i = 0; i < cuts.length - 1; i++) {
+        const u0 = cuts[i],
+          u1 = cuts[i + 1];
+        if (u1 - u0 < 0.5) continue;
+        const op = ops.find(o => Math.abs(o.a - u0) < 0.5 && Math.abs(o.b - u1) < 0.5);
+        if (!op) {
+          panel(u0, u1, 0, H, true);
+          continue;
+        }
+        if (op.s > 1) panel(u0, u1, 0, () => op.s, false);
+        panel(u0, u1, op.h, H, true);
+        // reveals: the depth of the hole
+        if (op.s > 1) push([P(op.a, t / 2, op.s), P(op.b, t / 2, op.s), P(op.b, -t / 2, op.s), P(op.a, -t / 2, op.s)], C3.reveal);
+        push([P(op.a, t / 2, op.h), P(op.b, t / 2, op.h), P(op.b, -t / 2, op.h), P(op.a, -t / 2, op.h)], C3.reveal);
+        for (const u of [op.a, op.b]) push([P(u, t / 2, op.s), P(u, t / 2, op.h), P(u, -t / 2, op.h), P(u, -t / 2, op.s)], C3.reveal);
+      }
+      for (const u of [0, L]) push([P(u, t / 2, 0), P(u, -t / 2, 0), P(u, -t / 2, H(u)), P(u, t / 2, H(u))], C3.wallTop);
+    }
+  }
+
+  // furniture
+  if (opts.furniture) {
+    for (const it of doc.items) {
+      const def = defs[it.defId];
+      if (!def) continue;
+      const poly = itemPoly(it, def);
+      const hz = def.hz || 700;
+      const hr = headroomFor(it, def, doc);
+      const base = hr && hz > hr.mm ? C3.bad : C3.grp[def.groupKey] || C3.grp.custom;
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i],
+          c2 = poly[(i + 1) % poly.length];
+        push([W(a, 0), W(c2, 0), W(c2, hz), W(a, hz)], base);
+      }
+      for (const tri of triangulate(poly)) push(tri.map(i => W(poly[i], hz)), base);
+    }
+  }
+  return faces;
+}
+
+/* ---- camera & raster ---- */
+
+function makeCam(eye, yaw, pitch, fov) {
+  const cp = Math.cos(pitch);
+  const f = {
+    x: cp * Math.cos(yaw),
+    y: cp * Math.sin(yaw),
+    z: Math.sin(pitch)
+  };
+  const rl = Math.hypot(f.y, -f.x) || 1;
+  const r = {
+    x: f.y / rl,
+    y: -f.x / rl,
+    z: 0
+  };
+  const u = {
+    x: r.y * f.z - r.z * f.y,
+    y: r.z * f.x - r.x * f.z,
+    z: r.x * f.y - r.y * f.x
+  };
+  return {
+    eye,
+    f,
+    r,
+    u,
+    fov: fov || 1.0
+  };
+}
+function clipNear(v, near) {
+  const out = [];
+  for (let i = 0; i < v.length; i++) {
+    const a = v[i],
+      b = v[(i + 1) % v.length];
+    const ai = a.z >= near,
+      bi = b.z >= near;
+    if (ai) out.push(a);
+    if (ai !== bi) {
+      const tt = (near - a.z) / (b.z - a.z);
+      out.push({
+        x: a.x + (b.x - a.x) * tt,
+        y: a.y + (b.y - a.y) * tt,
+        z: near
+      });
+    }
+  }
+  return out;
+}
+/* ---- WebGL: a real depth buffer, so ordering is exact ----
+   Painter's sorting can't order a long wall against furniture beside it —
+   the wall's centroid sits mid-room while its near end is at your face.
+   Per-pixel depth removes the whole class of problem. The canvas-2D
+   painter's path below stays as a fallback if WebGL is unavailable. */
+
+function mat4Mul(a, b) {
+  const o = new Float32Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+  }
+  return o;
+}
+function mat4Persp(fov, aspect, near, far) {
+  const f = 1 / Math.tan(fov / 2),
+    nf = 1 / (near - far);
+  const m = new Float32Array(16);
+  m[0] = f / aspect;
+  m[5] = f;
+  m[10] = (far + near) * nf;
+  m[11] = -1;
+  m[14] = 2 * far * near * nf;
+  return m;
+}
+function mat4View(cam) {
+  const {
+    r,
+    u,
+    f,
+    eye
+  } = cam;
+  const m = new Float32Array(16);
+  m[0] = r.x;
+  m[4] = r.y;
+  m[8] = r.z;
+  m[12] = -(r.x * eye.x + r.y * eye.y + r.z * eye.z);
+  m[1] = u.x;
+  m[5] = u.y;
+  m[9] = u.z;
+  m[13] = -(u.x * eye.x + u.y * eye.y + u.z * eye.z);
+  m[2] = -f.x;
+  m[6] = -f.y;
+  m[10] = -f.z;
+  m[14] = f.x * eye.x + f.y * eye.y + f.z * eye.z;
+  m[15] = 1;
+  return m;
+}
+/* fan every convex face into triangles, plus an outline pass for definition */
+function glBuffers(faces) {
+  let tn = 0,
+    ln = 0;
+  for (const f of faces) {
+    tn += (f.pts.length - 2) * 3;
+    ln += f.pts.length * 2;
+  }
+  const pos = new Float32Array(tn * 3),
+    col = new Float32Array(tn * 3);
+  const lpos = new Float32Array(ln * 3);
+  let i = 0,
+    j = 0;
+  for (const f of faces) {
+    const p = f.pts,
+      c = f.rgb;
+    for (let k = 1; k < p.length - 1; k++) {
+      for (const v of [p[0], p[k], p[k + 1]]) {
+        pos[i] = v.x;
+        pos[i + 1] = v.y;
+        pos[i + 2] = v.z;
+        col[i] = c[0];
+        col[i + 1] = c[1];
+        col[i + 2] = c[2];
+        i += 3;
+      }
+    }
+    for (let k = 0; k < p.length; k++) {
+      const a = p[k],
+        b = p[(k + 1) % p.length];
+      lpos[j] = a.x;
+      lpos[j + 1] = a.y;
+      lpos[j + 2] = a.z;
+      lpos[j + 3] = b.x;
+      lpos[j + 4] = b.y;
+      lpos[j + 5] = b.z;
+      j += 6;
+    }
+  }
+  return {
+    pos,
+    col,
+    lpos,
+    triVerts: tn,
+    lineVerts: ln
+  };
+}
+function makeGL(canvas) {
+  let gl = null;
+  try {
+    const attrs = {
+      antialias: true,
+      alpha: false,
+      depth: true
+    };
+    gl = canvas.getContext("webgl", attrs) || canvas.getContext("experimental-webgl", attrs);
+  } catch (e) {
+    return null;
+  }
+  if (!gl) return null;
+  // strict checks: a partial or stubbed WebGL should fall back, not draw nothing
+  if (typeof gl.createShader !== "function" || typeof gl.drawArrays !== "function") return null;
+  const sh = (type, src) => {
+    const s = gl.createShader(type);
+    if (!s) return null;
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return gl.getShaderParameter(s, gl.COMPILE_STATUS) === true ? s : null;
+  };
+  const vs = sh(gl.VERTEX_SHADER, "attribute vec3 aPos;attribute vec3 aCol;uniform mat4 uMVP;varying vec3 vCol;" + "void main(){vCol=aCol;gl_Position=uMVP*vec4(aPos,1.0);}");
+  const fs = sh(gl.FRAGMENT_SHADER, "precision mediump float;varying vec3 vCol;void main(){gl_FragColor=vec4(vCol,1.0);}");
+  if (!vs || !fs) return null;
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
+  gl.linkProgram(prog);
+  if (gl.getProgramParameter(prog, gl.LINK_STATUS) !== true) return null;
+  gl.useProgram(prog);
+  const aPos = gl.getAttribLocation(prog, "aPos");
+  const aCol = gl.getAttribLocation(prog, "aCol");
+  const uMVP = gl.getUniformLocation(prog, "uMVP");
+  if (!(aPos >= 0) || !(aCol >= 0) || !uMVP) return null;
+  const bPos = gl.createBuffer(),
+    bCol = gl.createBuffer();
+  const bLine = gl.createBuffer(),
+    bLineCol = gl.createBuffer();
+  const bSky = gl.createBuffer(),
+    bSkyCol = gl.createBuffer();
+  gl.enableVertexAttribArray(aPos);
+  gl.enableVertexAttribArray(aCol);
+
+  // full-screen gradient, drawn in clip space with depth off
+  const s1 = hex2rgb(C3.sky1).map(v => v / 255),
+    s2 = hex2rgb(C3.sky2).map(v => v / 255);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bSky);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, 1, 0, 1, 1, 0, -1, -1, 0, -1, -1, 0, 1, 1, 0, 1, -1, 0]), gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bSkyCol);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([...s1, ...s1, ...s2, ...s2, ...s1, ...s2]), gl.STATIC_DRAW);
+  const IDENT = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  let triVerts = 0,
+    lineVerts = 0;
+  const bind = (buf, loc) => {
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+  };
+  return {
+    gl,
+    upload(faces) {
+      const b = glBuffers(faces);
+      triVerts = b.triVerts;
+      lineVerts = b.lineVerts;
+      gl.bindBuffer(gl.ARRAY_BUFFER, bPos);
+      gl.bufferData(gl.ARRAY_BUFFER, b.pos, gl.DYNAMIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, bCol);
+      gl.bufferData(gl.ARRAY_BUFFER, b.col, gl.DYNAMIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, bLine);
+      gl.bufferData(gl.ARRAY_BUFFER, b.lpos, gl.DYNAMIC_DRAW);
+      const lc = new Float32Array(b.lineVerts * 3);
+      for (let k = 0; k < lc.length; k += 3) {
+        lc[k] = 0.13;
+        lc[k + 1] = 0.17;
+        lc[k + 2] = 0.16;
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, bLineCol);
+      gl.bufferData(gl.ARRAY_BUFFER, lc, gl.DYNAMIC_DRAW);
+    },
+    draw(cam, w, h, far) {
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.clearColor(s2[0], s2[1], s2[2], 1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.disable(gl.DEPTH_TEST);
+      gl.depthMask(false);
+      gl.uniformMatrix4fv(uMVP, false, IDENT);
+      bind(bSky, aPos);
+      bind(bSkyCol, aCol);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      if (!triVerts) return;
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LEQUAL);
+      gl.depthMask(true);
+      const mvp = mat4Mul(mat4Persp(cam.fov, w / h, 80, far || 80000), mat4View(cam));
+      gl.uniformMatrix4fv(uMVP, false, mvp);
+      gl.enable(gl.POLYGON_OFFSET_FILL);
+      gl.polygonOffset(1.2, 1.2);
+      bind(bPos, aPos);
+      bind(bCol, aCol);
+      gl.drawArrays(gl.TRIANGLES, 0, triVerts);
+      gl.disable(gl.POLYGON_OFFSET_FILL);
+      bind(bLine, aPos);
+      bind(bLineCol, aCol);
+      gl.drawArrays(gl.LINES, 0, lineVerts);
+    }
+  };
+}
+function renderScene(ctx, faces, cam, W_, H_) {
+  const g = ctx.createLinearGradient(0, 0, 0, H_);
+  g.addColorStop(0, C3.sky1);
+  g.addColorStop(1, C3.sky2);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W_, H_);
+  const fl = H_ / 2 / Math.tan(cam.fov / 2);
+  const draw = [];
+  for (const face of faces) {
+    const v = [];
+    for (const p of face.pts) {
+      const dx = p.x - cam.eye.x,
+        dy = p.y - cam.eye.y,
+        dz = p.z - cam.eye.z;
+      v.push({
+        x: dx * cam.r.x + dy * cam.r.y + dz * cam.r.z,
+        y: dx * cam.u.x + dy * cam.u.y + dz * cam.u.z,
+        z: dx * cam.f.x + dy * cam.f.y + dz * cam.f.z
+      });
+    }
+    const c = clipNear(v, 40);
+    if (c.length < 3) continue;
+    let zs = 0;
+    const s = new Array(c.length);
+    for (let i = 0; i < c.length; i++) {
+      zs += c[i].z;
+      s[i] = {
+        x: W_ / 2 + c[i].x / c[i].z * fl,
+        y: H_ / 2 - c[i].y / c[i].z * fl
+      };
+    }
+    draw.push({
+      s,
+      d: zs / c.length,
+      css: face.css,
+      layer: face.layer
+    });
+  }
+  draw.sort((a, b) => a.layer - b.layer || b.d - a.d);
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 1;
+  for (const p of draw) {
+    ctx.beginPath();
+    ctx.moveTo(p.s[0].x, p.s[0].y);
+    for (let i = 1; i < p.s.length; i++) ctx.lineTo(p.s[i].x, p.s[i].y);
+    ctx.closePath();
+    ctx.fillStyle = p.css;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(20,28,26,0.20)";
+    ctx.stroke();
+  }
+  return draw.length;
+}
+
+/* ============================================================
+   3D viewport: orbit or walk, with touch controls
+   ============================================================ */
+
+function View3D({
+  doc,
+  defs,
+  lang,
+  t,
+  onClose,
+  invert,
+  setInvert
+}) {
+  const [mode, setMode] = useState("orbit");
+  const [vis, setVis] = useState({
+    roof: true,
+    walls: true,
+    furniture: true
+  });
+  const eyeRef = useRef(1650);
+  const [eyeShown, setEyeShown] = useState(1650);
+  const [, tick] = useState(0);
+  const keys = useRef(new Set());
+  const lastT = useRef(0);
+  const coarse = useMemo(() => typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(pointer: coarse)").matches : true, []);
+  const setEye = v => {
+    eyeRef.current = clamp(v, 100, 40000);
+    setEyeShown(Math.round(eyeRef.current));
+    dirty.current = true;
+  };
+  const wrap = useRef(null);
+  const cvRef = useRef(null);
+  const dirty = useRef(true);
+  const glr = useRef(null);
+  const [gpu, setGpu] = useState(null); // null = not decided yet
+  const orb = useRef({
+    tx: 0,
+    ty: 0,
+    tz: 1200,
+    dist: 14000,
+    az: -2.3,
+    el: 0.45
+  });
+  const walk = useRef({
+    x: 0,
+    y: 0,
+    yaw: 0,
+    pitch: -0.03
+  });
+  const stick = useRef({
+    active: false,
+    dx: 0,
+    dy: 0,
+    id: null,
+    ox: 0,
+    oy: 0
+  });
+  const ptrs = useRef(new Map());
+  const gest = useRef(null);
+  const size = useRef({
+    w: 320,
+    h: 320
+  });
+
+  /* the painter's fallback needs small faces to sort well; WebGL does not */
+  const faces = useMemo(() => buildScene(doc, defs, {
+    ...vis,
+    subdiv: gpu ? 0 : 900
+  }), [doc, defs, vis, gpu]);
+  const sceneFar = useMemo(() => {
+    const pts = [];
+    for (const w of doc.walls) pts.push(...wallPoly(w));
+    for (const r of doc.rooms) pts.push(...r.points);
+    const b = pts.length ? bbox(pts) : {
+      w: 8000,
+      h: 8000
+    };
+    return Math.max(b.w, b.h) * 8 + 40000;
+  }, [doc.walls, doc.rooms]);
+
+  /* frame the model when the view opens */
+  useEffect(() => {
+    const pts = [];
+    for (const w of doc.walls) pts.push(...wallPoly(w));
+    for (const r of doc.rooms) pts.push(...r.points);
+    for (const it of doc.items) {
+      const d = defs[it.defId];
+      if (d) pts.push(...itemPoly(it, d));
+    }
+    const b = pts.length ? bbox(pts) : {
+      cx: 0,
+      cy: 0,
+      w: 6000,
+      h: 6000
+    };
+    orb.current = {
+      tx: b.cx,
+      ty: -b.cy,
+      tz: 1100,
+      dist: Math.max(b.w, b.h) * 1.7 + 4000,
+      az: -2.25,
+      el: 0.44
+    };
+    walk.current = {
+      x: b.cx,
+      y: -b.cy,
+      yaw: 0.6,
+      pitch: -0.03
+    };
+    dirty.current = true;
+  }, []);
+  useEffect(() => {
+    const cv = cvRef.current;
+    if (!cv) return;
+    const r = makeGL(cv);
+    glr.current = r;
+    setGpu(!!r);
+    dirty.current = true;
+  }, []);
+  useEffect(() => {
+    if (glr.current) glr.current.upload(faces);
+    dirty.current = true;
+  }, [faces]);
+  useEffect(() => {
+    dirty.current = true;
+  }, [mode]);
+  const camNow = useCallback(() => {
+    if (mode === "orbit") {
+      const o = orb.current;
+      const ce = Math.cos(o.el);
+      const eye = {
+        x: o.tx - Math.cos(o.az) * ce * o.dist,
+        y: o.ty - Math.sin(o.az) * ce * o.dist,
+        z: o.tz + Math.sin(o.el) * o.dist
+      };
+      return makeCam(eye, o.az, -o.el, 0.85);
+    }
+    const w = walk.current;
+    return makeCam({
+      x: w.x,
+      y: w.y,
+      z: eyeRef.current
+    }, w.yaw, w.pitch, 1.12);
+  }, [mode]);
+
+  /* draw loop: only repaints when something moved */
+  useEffect(() => {
+    let raf;
+    const frame = ts => {
+      const cv = cvRef.current;
+      const dt = lastT.current ? Math.min((ts - lastT.current) / 1000, 0.1) : 0;
+      lastT.current = ts;
+      if (cv) {
+        const s = stick.current;
+        const K = keys.current;
+        const key = (a, b) => (K.has(a) ? 1 : 0) - (K.has(b) ? 1 : 0);
+        if (mode === "walk") {
+          const fwd = (s.active ? -s.dy : 0) + key("w", "s") + key("arrowup", "arrowdown");
+          const side = (s.active ? s.dx : 0) + key("d", "a");
+          const rise = key("e", "q");
+          if (fwd || side || rise) {
+            const w = walk.current;
+            const sp = 1900 * (K.has("shift") ? 3 : 1) * dt;
+            // right vector of a camera at this yaw is (sin yaw, -cos yaw)
+            w.x += (Math.cos(w.yaw) * fwd + Math.sin(w.yaw) * side) * sp;
+            w.y += (Math.sin(w.yaw) * fwd - Math.cos(w.yaw) * side) * sp;
+            if (rise) {
+              eyeRef.current = clamp(eyeRef.current + rise * sp, 100, 40000);
+              if (Math.abs(eyeRef.current - eyeShown) > 40) setEyeShown(Math.round(eyeRef.current));
+            }
+            dirty.current = true;
+          }
+        } else {
+          const turn = key("d", "a") + key("arrowright", "arrowleft");
+          const tilt = key("w", "s") + key("arrowup", "arrowdown");
+          const dolly = key("=", "-") + key("+", "_");
+          if (turn || tilt || dolly) {
+            orb.current.az += turn * 1.4 * dt;
+            orb.current.el = clamp(orb.current.el + tilt * 1.1 * dt, -0.25, 1.45);
+            if (dolly) orb.current.dist = clamp(orb.current.dist * (1 - dolly * 1.4 * dt), 800, 200000);
+            dirty.current = true;
+          }
+        }
+        if (dirty.current) {
+          dirty.current = false;
+          const r = wrap.current.getBoundingClientRect();
+          const dpr = Math.min(window.devicePixelRatio || 1, 2);
+          const W = Math.max(1, Math.round(r.width)),
+            H = Math.max(1, Math.round(r.height));
+          if (size.current.w !== W || size.current.h !== H) {
+            size.current = {
+              w: W,
+              h: H
+            };
+            cv.width = W * dpr;
+            cv.height = H * dpr;
+            cv.style.width = W + "px";
+            cv.style.height = H + "px";
+          }
+          if (glr.current) {
+            glr.current.draw(camNow(), W, H, sceneFar);
+          } else {
+            const ctx = cv.getContext("2d");
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            renderScene(ctx, faces, camNow(), W, H);
+          }
+        }
+      }
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    const ro = new ResizeObserver(() => {
+      dirty.current = true;
+    });
+    if (wrap.current) ro.observe(wrap.current);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [faces, camNow, mode, sceneFar, eyeShown]);
+
+  /* ---- touch ---- */
+  const localPt = e => {
+    const r = wrap.current.getBoundingClientRect();
+    return {
+      x: e.clientX - r.left,
+      y: e.clientY - r.top
+    };
+  };
+  const onDown = e => {
+    const p = localPt(e);
+    const now = Date.now();
+    for (const [id, q] of [...ptrs.current]) if (now - q.t > 4000) ptrs.current.delete(id);
+    // bottom-left corner in walk mode is the movement stick
+    if (mode === "walk" && coarse && e.pointerType !== "mouse" && !stick.current.active && p.x < 132 && p.y > size.current.h - 132) {
+      stick.current = {
+        active: true,
+        id: e.pointerId,
+        ox: p.x,
+        oy: p.y,
+        dx: 0,
+        dy: 0
+      };
+      return;
+    }
+    ptrs.current.set(e.pointerId, {
+      x: p.x,
+      y: p.y,
+      t: now
+    });
+    if (ptrs.current.size === 2) {
+      const [a, b] = [...ptrs.current.values()];
+      gest.current = {
+        type: "two",
+        d0: Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1),
+        m0: {
+          x: (a.x + b.x) / 2,
+          y: (a.y + b.y) / 2
+        },
+        dist0: orb.current.dist,
+        t0: {
+          x: orb.current.tx,
+          y: orb.current.ty
+        }
+      };
+      return;
+    }
+    gest.current = {
+      type: "one",
+      last: p
+    };
+  };
+  const onMove = e => {
+    const s = stick.current;
+    if (s.active && s.id === e.pointerId) {
+      const p = localPt(e);
+      const dx = clamp((p.x - s.ox) / 52, -1, 1),
+        dy = clamp((p.y - s.oy) / 52, -1, 1);
+      stick.current = {
+        ...s,
+        dx,
+        dy
+      };
+      tick(n => n + 1);
+      return;
+    }
+    if (!ptrs.current.has(e.pointerId)) return;
+    const p = localPt(e);
+    ptrs.current.set(e.pointerId, {
+      x: p.x,
+      y: p.y,
+      t: Date.now()
+    });
+    const g = gest.current;
+    if (!g) return;
+    const inv = invert ? -1 : 1;
+    if (g.type === "two" && ptrs.current.size >= 2) {
+      const [a, b] = [...ptrs.current.values()];
+      const d1 = Math.hypot(a.x - b.x, a.y - b.y);
+      const m1 = {
+        x: (a.x + b.x) / 2,
+        y: (a.y + b.y) / 2
+      };
+      if (mode === "orbit") {
+        orb.current.dist = clamp(g.dist0 * (g.d0 / Math.max(d1, 1)), 800, 200000);
+        const az = orb.current.az;
+        // mm of world per screen pixel at the pivot distance
+        const k = 2 * orb.current.dist * Math.tan(0.85 / 2) / Math.max(size.current.h, 1);
+        const dx = (m1.x - g.m0.x) * inv,
+          dy = (m1.y - g.m0.y) * inv;
+        const rx = Math.sin(az),
+          ry = -Math.cos(az); // camera right
+        const fx = Math.cos(az),
+          fy = Math.sin(az); // camera forward, flattened
+        orb.current.tx = g.t0.x + (-rx * dx + fx * dy) * k;
+        orb.current.ty = g.t0.y + (-ry * dx + fy * dy) * k;
+      }
+      dirty.current = true;
+      return;
+    }
+    if (g.type === "one") {
+      const dx = (p.x - g.last.x) * inv,
+        dy = (p.y - g.last.y) * inv;
+      g.last = p;
+      if (mode === "orbit") {
+        orb.current.az -= dx * 0.008;
+        orb.current.el = clamp(orb.current.el + dy * 0.008, -0.25, 1.45);
+      } else {
+        // same convention as orbit: drag the scene, don't steer the head
+        walk.current.yaw += dx * 0.005;
+        walk.current.pitch = clamp(walk.current.pitch + dy * 0.005, -1.3, 1.3);
+      }
+      dirty.current = true;
+    }
+  };
+  const onUp = e => {
+    if (stick.current.id === e.pointerId) {
+      stick.current = {
+        active: false,
+        dx: 0,
+        dy: 0,
+        id: null,
+        ox: 0,
+        oy: 0
+      };
+      tick(n => n + 1);
+      return;
+    }
+    ptrs.current.delete(e.pointerId);
+    if (ptrs.current.size === 0) gest.current = null;else if (ptrs.current.size === 1) gest.current = {
+      type: "one",
+      last: [...ptrs.current.values()][0]
+    };
+  };
+  useEffect(() => {
+    const m = e => onMove(e),
+      u = e => onUp(e);
+    const clear = () => {
+      ptrs.current.clear();
+      gest.current = null;
+      stick.current = {
+        active: false,
+        dx: 0,
+        dy: 0,
+        id: null,
+        ox: 0,
+        oy: 0
+      };
+    };
+    window.addEventListener("pointermove", m, {
+      passive: false
+    });
+    window.addEventListener("pointerup", u);
+    window.addEventListener("pointercancel", u);
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("pointermove", m);
+      window.removeEventListener("pointerup", u);
+      window.removeEventListener("pointercancel", u);
+      window.removeEventListener("blur", clear);
+    };
+  });
+
+  /* keyboard: WASD to move, QE for height, Shift to sprint, arrows to look */
+  useEffect(() => {
+    const norm = e => e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
+    const handled = new Set(["w", "a", "s", "d", "q", "e", "shift", "+", "=", "-", "_", "arrowup", "arrowdown", "arrowleft", "arrowright"]);
+    const down = e => {
+      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName || "")) return;
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      const k = norm(e);
+      if (!handled.has(k)) return;
+      e.preventDefault();
+      keys.current.add(k);
+      lastT.current = 0;
+    };
+    const up = e => keys.current.delete(norm(e));
+    const clear = () => keys.current.clear();
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", clear);
+      keys.current.clear();
+    };
+  }, [onClose]);
+  const Toggle = ({
+    k,
+    label
+  }) => /*#__PURE__*/React.createElement(Btn, {
+    small: true,
+    active: vis[k],
+    onClick: () => setVis(v => ({
+      ...v,
+      [k]: !v[k]
+    }))
+  }, label);
+  const st = stick.current;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "absolute",
+      inset: 0,
+      background: C.chrome,
+      zIndex: 60,
+      display: "flex",
+      flexDirection: "column"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 6,
+      padding: "9px 10px",
+      borderBottom: `1px solid ${C.line}`,
+      flexShrink: 0,
+      flexWrap: "wrap"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: onClose,
+    style: {
+      background: C.chrome3,
+      border: `1px solid ${C.line}`,
+      color: C.text,
+      borderRadius: 8,
+      padding: "6px 11px",
+      fontSize: 15,
+      cursor: "pointer",
+      lineHeight: 1
+    }
+  }, "✕"), /*#__PURE__*/React.createElement(Btn, {
+    small: true,
+    active: mode === "orbit",
+    onClick: () => setMode("orbit")
+  }, t("orbit")), /*#__PURE__*/React.createElement(Btn, {
+    small: true,
+    active: mode === "walk",
+    onClick: () => setMode("walk")
+  }, t("walk")), /*#__PURE__*/React.createElement(Btn, {
+    small: true,
+    active: invert,
+    onClick: () => setInvert(!invert)
+  }, t("invertDrag")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 5,
+      marginLeft: "auto"
+    }
+  }, /*#__PURE__*/React.createElement(Toggle, {
+    k: "roof",
+    label: t("roofOn")
+  }), /*#__PURE__*/React.createElement(Toggle, {
+    k: "walls",
+    label: t("wallsTab")
+  }), /*#__PURE__*/React.createElement(Toggle, {
+    k: "furniture",
+    label: t("furniture")
+  }))), /*#__PURE__*/React.createElement("div", {
+    ref: wrap,
+    onPointerDown: onDown,
+    style: {
+      position: "relative",
+      flex: 1,
+      touchAction: "none",
+      overflow: "hidden",
+      cursor: "grab"
+    }
+  }, /*#__PURE__*/React.createElement("canvas", {
+    ref: cvRef,
+    style: {
+      display: "block",
+      position: "absolute",
+      inset: 0
+    }
+  }), mode === "walk" && /*#__PURE__*/React.createElement(React.Fragment, null, coarse && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "absolute",
+      left: 22,
+      bottom: 22,
+      width: 92,
+      height: 92,
+      borderRadius: 46,
+      border: `1.5px solid ${st.active ? C.accent : "rgba(255,255,255,0.5)"}`,
+      background: "rgba(27,37,40,0.28)",
+      pointerEvents: "none"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "absolute",
+      left: 46 + st.dx * 30 - 17,
+      top: 46 + st.dy * 30 - 17,
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      background: st.active ? C.accent : "rgba(255,255,255,0.72)"
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "absolute",
+      right: 14,
+      bottom: 22,
+      display: "flex",
+      flexDirection: "column",
+      gap: 6
+    }
+  }, [["+", 250], ["−", -250]].map(([l, d]) => /*#__PURE__*/React.createElement("button", {
+    key: l,
+    onClick: () => setEye(eyeRef.current + d),
+    style: {
+      width: 42,
+      height: 42,
+      borderRadius: 12,
+      background: "rgba(27,37,40,0.8)",
+      border: `1px solid ${C.line}`,
+      color: C.text,
+      fontSize: 19,
+      cursor: "pointer"
+    }
+  }, l)), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setEye(1650),
+    style: {
+      width: 42,
+      borderRadius: 10,
+      background: "rgba(27,37,40,0.8)",
+      border: `1px solid ${C.line}`,
+      color: C.dim,
+      fontSize: 9,
+      padding: "5px 0",
+      cursor: "pointer",
+      fontFamily: MONO
+    }
+  }, eyeShown))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "absolute",
+      left: 12,
+      top: 10,
+      fontFamily: MONO,
+      fontSize: 10.5,
+      color: "rgba(30,40,42,0.65)",
+      pointerEvents: "none",
+      lineHeight: 1.5
+    }
+  }, mode === "orbit" ? t("orbitHint") : t("walkHint"), !coarse && /*#__PURE__*/React.createElement("div", null, t("keysHint")), gpu === false && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "rgba(150,60,40,0.85)"
+    }
+  }, t("noGpu")))));
+}
+
+/* ============================================================
    Cross-section — cuts across the ceiling slope
    ============================================================ */
 
@@ -2465,6 +3985,10 @@ function CabinPlanner() {
   const [lang, setLang] = useState("en");
   const [showHead, setShowHead] = useState(true);
   const [showSection, setShowSection] = useState(false);
+  const [selVert, setSelVert] = useState(null);
+  const [show3d, setShow3d] = useState(false);
+  const [invert3d, setInvert3d] = useState(false);
+  const [roomTab, setRoomTab] = useState("shape");
   const [xp, setXp] = useState({
     paper: "A4",
     scaleDenom: 50,
@@ -2492,6 +4016,7 @@ function CabinPlanner() {
         if (typeof st.showHead === "boolean") setShowHead(st.showHead);
         if (typeof st.showGrid === "boolean") setShowGrid(st.showGrid);
         if (typeof st.showDims === "boolean") setShowDims(st.showDims);
+        if (typeof st.invert3d === "boolean") setInvert3d(st.invert3d);
       }
       const idx = (await sGet(KEY_INDEX)) || [];
       setIndex(idx);
@@ -2537,9 +4062,10 @@ function CabinPlanner() {
       grid,
       showHead,
       showGrid,
-      showDims
+      showDims,
+      invert3d
     });
-  }, [lang, grid, showHead, showGrid, showDims, ready]);
+  }, [lang, grid, showHead, showGrid, showDims, invert3d, ready]);
 
   /* ---- resize ---- */
   useEffect(() => {
@@ -2649,6 +4175,9 @@ function CabinPlanner() {
   useEffect(() => {
     if (fitReq) fitAll();
   }, [fitReq]);
+  useEffect(() => {
+    if (!sel || sel.kind !== "room") setSelVert(null);
+  }, [sel]);
 
   /* ---- hit testing ---- */
   const hitTest = useCallback((wp, tolPx) => {
@@ -2792,6 +4321,59 @@ function CabinPlanner() {
       return;
     }
     if (mode === "select") {
+      /* room reshaping: solid handles move a corner, hollow ones add one */
+      if (selRoom) {
+        const pts = selRoom.points;
+        for (let i = 0; i < pts.length; i++) {
+          if (Math.hypot(wp.x - pts[i].x, wp.y - pts[i].y) * vp.s < 20) {
+            setSelVert(i);
+            setRoomTab("shape");
+            gest.current = {
+              type: "vertex",
+              roomId: selRoom.id,
+              index: i,
+              snapshot: doc,
+              start: p,
+              t: now,
+              maxD: 0
+            };
+            return;
+          }
+        }
+        for (let i = 0; i < pts.length; i++) {
+          const a = pts[i],
+            b = pts[(i + 1) % pts.length];
+          const m = {
+            x: (a.x + b.x) / 2,
+            y: (a.y + b.y) / 2
+          };
+          if (Math.hypot(wp.x - m.x, wp.y - m.y) * vp.s < 17) {
+            const idx = i + 1;
+            commit(prev => {
+              const rooms = prev.rooms.map(r => r.id === selRoom.id ? {
+                ...r,
+                points: [...r.points.slice(0, idx), m, ...r.points.slice(idx)]
+              } : r);
+              return withAutoWalls({
+                ...prev,
+                rooms
+              }, selRoom.id);
+            });
+            setSelVert(idx);
+            setRoomTab("shape");
+            gest.current = {
+              type: "vertex",
+              roomId: selRoom.id,
+              index: idx,
+              snapshot: null,
+              start: p,
+              t: now,
+              maxD: 0
+            };
+            return;
+          }
+        }
+      }
       if (selItem && defs[selItem.defId]) {
         const hp = handleWorld(selItem, defs[selItem.defId]);
         if (Math.hypot(wp.x - hp.x, wp.y - hp.y) * vp.s < 22) {
@@ -2962,6 +4544,25 @@ function CabinPlanner() {
       });else setGhost(snapPoint(toWorld(p.x, p.y), doc, grid, 16 / vp.s, draft?.[draft.length - 1]));
       return;
     }
+    if (g.type === "vertex") {
+      const room = doc.rooms.find(r => r.id === g.roomId);
+      if (!room) return;
+      const sn = snapRoomVertex(toWorld(p.x, p.y), room.points, g.index, doc, grid, 18 / vp.s);
+      setDoc(prev => {
+        const rooms = prev.rooms.map(r => r.id === g.roomId ? {
+          ...r,
+          points: r.points.map((q, k) => k === g.index ? {
+            x: sn.x,
+            y: sn.y
+          } : q)
+        } : r);
+        return withAutoWalls({
+          ...prev,
+          rooms
+        }, g.roomId);
+      });
+      return;
+    }
     if (g.type === "rotate") {
       const it = doc.items.find(x => x.id === g.id);
       if (!it) return;
@@ -3083,7 +4684,7 @@ function CabinPlanner() {
     }
     gest.current = null;
     if (!g) return;
-    if ((g.type === "drag" || g.type === "rotate") && (g.maxD || 0) > 2 && g.snapshot) push(g.snapshot);
+    if ((g.type === "drag" || g.type === "rotate" || g.type === "vertex") && (g.maxD || 0) > 2 && g.snapshot) push(g.snapshot);
     const isTap = (g.maxD || 0) <= TAP_SLOP && Date.now() - g.t < 900;
     if ((g.type === "tool" || g.type === "pan") && isTap) {
       const p = local(e);
@@ -3235,15 +4836,26 @@ function CabinPlanner() {
         setGhost(null);
         return;
       }
-      commit(prev => ({
-        ...prev,
-        rooms: [...prev.rooms, {
+      {
+        const room = {
           id: uid(),
           name: tr(lang, "room"),
           points: pts,
-          ceiling: defaultCeiling()
-        }]
-      }));
+          ceiling: defaultCeiling(),
+          autoWalls: {
+            mode: "centre",
+            t: doc.wallT
+          }
+        };
+        commit(prev => rebuildRoomWalls({
+          ...prev,
+          rooms: [...prev.rooms, room]
+        }, room));
+        setSel({
+          kind: "room",
+          id: room.id
+        });
+      }
     }
     setDraft(null);
     setGhost(null);
@@ -3413,10 +5025,15 @@ function CabinPlanner() {
         walls: prev.walls.filter(w => w.id !== sel.id),
         openings: prev.openings.filter(o => o.wallId !== sel.id)
       };
-      if (sel.kind === "room") return {
-        ...prev,
-        rooms: prev.rooms.filter(r => r.id !== sel.id)
-      };
+      if (sel.kind === "room") {
+        const gone = new Set(prev.walls.filter(w => w.room === sel.id).map(w => w.id));
+        return {
+          ...prev,
+          rooms: prev.rooms.filter(r => r.id !== sel.id),
+          walls: prev.walls.filter(w => w.room !== sel.id),
+          openings: prev.openings.filter(o => !gone.has(o.wallId))
+        };
+      }
       if (sel.kind === "opening") return {
         ...prev,
         openings: prev.openings.filter(o => o.id !== sel.id)
@@ -3618,7 +5235,7 @@ function CabinPlanner() {
     y: p.y * vp.s + vp.oy
   });
   const labels = [];
-  const tools = [["select", "select", t("select")], ["wall", "wall", t("wall")], ["room", "room", t("room")], ["door", "door", t("opening")], ["furniture", "furn", t("furniture")], ["tape", "tape", t("measure")], ["image", "image", t("image")], ["section", "section", t("section")], ["export", "export", t("xport")]];
+  const tools = [["select", "select", t("select")], ["wall", "wall", t("wall")], ["room", "room", t("room")], ["door", "door", t("opening")], ["furniture", "furn", t("furniture")], ["tape", "tape", t("measure")], ["image", "image", t("image")], ["section", "section", t("section")], ["view3d", "cube", t("view3d")], ["export", "export", t("xport")]];
   const totalArea = doc.rooms.reduce((a, r) => a + polyArea(r.points), 0) / 1e6;
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -3985,7 +5602,141 @@ function CabinPlanner() {
         strokeWidth: 1.5
       }));
     })());
-  }), dimLines.map((d, i) => {
+  }), selRoom && (() => {
+    const pts = selRoom.points;
+    const n = pts.length;
+    const sp = pts.map(S);
+    const unit = (a, b) => {
+      const dx = b.x - a.x,
+        dy = b.y - a.y,
+        L = Math.hypot(dx, dy) || 1;
+      return {
+        x: dx / L,
+        y: dy / L
+      };
+    };
+    const marks = [],
+      edges = [];
+    pts.forEach((b, i) => {
+      const a = pts[(i - 1 + n) % n],
+        c = pts[(i + 1) % n];
+      const deg = interiorAngle(pts, i);
+      const nice = nearMultiple(deg, 45, 0.4);
+      const col = nice ? C.accent : "#98A08C";
+      const u1 = unit(b, a),
+        u2 = unit(b, c);
+      const sb = sp[i];
+      if (nearMultiple(deg, 90, 0.4) && Math.round(deg) % 180 !== 0) {
+        const R = 13; // the draughtsman's square tick
+        marks.push(/*#__PURE__*/React.createElement("polyline", {
+          key: "sq" + i,
+          fill: "none",
+          stroke: col,
+          strokeWidth: 1.6,
+          points: `${sb.x + u1.x * R},${sb.y + u1.y * R} ` + `${sb.x + (u1.x + u2.x) * R},${sb.y + (u1.y + u2.y) * R} ` + `${sb.x + u2.x * R},${sb.y + u2.y * R}`
+        }));
+      } else {
+        const R = 15;
+        const a1 = Math.atan2(u1.y, u1.x);
+        let sweep = deg * D2R;
+        const probe = {
+          x: b.x + Math.cos(a1 + sweep / 2) * 200,
+          y: b.y + Math.sin(a1 + sweep / 2) * 200
+        };
+        if (!pointInPoly(probe, pts)) sweep = -sweep;
+        const arc = Array.from({
+          length: 15
+        }, (_, k) => {
+          const ang = a1 + sweep * k / 14;
+          return `${sb.x + Math.cos(ang) * R},${sb.y + Math.sin(ang) * R}`;
+        });
+        marks.push(/*#__PURE__*/React.createElement("polyline", {
+          key: "ar" + i,
+          points: arc.join(" "),
+          fill: "none",
+          stroke: col,
+          strokeWidth: nice ? 1.6 : 1.1
+        }));
+      }
+      let bis = {
+        x: u1.x + u2.x,
+        y: u1.y + u2.y
+      };
+      const bl = Math.hypot(bis.x, bis.y);
+      bis = bl < 0.05 ? {
+        x: -u1.y,
+        y: u1.x
+      } : {
+        x: bis.x / bl,
+        y: bis.y / bl
+      };
+      const inward = pointInPoly({
+        x: b.x + bis.x * 150,
+        y: b.y + bis.y * 150
+      }, pts) ? 1 : -1;
+      labels.push({
+        x: sb.x + bis.x * inward * 33,
+        y: sb.y + bis.y * inward * 33,
+        t: (Math.round(deg * 10) / 10).toFixed(deg % 1 ? 1 : 0) + "°",
+        s: 10.5,
+        c: col,
+        w: nice ? 700 : 500,
+        box: true
+      });
+    });
+    pts.forEach((a, i) => {
+      const b = pts[(i + 1) % n],
+        sa = sp[i],
+        sb2 = sp[(i + 1) % n];
+      const mm = Math.hypot(b.x - a.x, b.y - a.y);
+      if (mm * vp.s < 34) return;
+      const u = unit(a, b),
+        nx = -u.y,
+        ny = u.x;
+      const mid = {
+        x: (a.x + b.x) / 2,
+        y: (a.y + b.y) / 2
+      };
+      const outward = pointInPoly({
+        x: mid.x + nx * 120,
+        y: mid.y + ny * 120
+      }, pts) ? -1 : 1;
+      labels.push({
+        x: (sa.x + sb2.x) / 2 + nx * outward * 19,
+        y: (sa.y + sb2.y) / 2 + ny * outward * 19,
+        t: String(Math.round(mm)),
+        s: 10.5,
+        c: "#5F6659",
+        w: 600,
+        box: true
+      });
+      edges.push(/*#__PURE__*/React.createElement("circle", {
+        key: "m" + i,
+        cx: (sa.x + sb2.x) / 2,
+        cy: (sa.y + sb2.y) / 2,
+        r: 5.5,
+        fill: C.paper,
+        stroke: C.accent,
+        strokeWidth: 1.6,
+        opacity: 0.9
+      }));
+    });
+    return /*#__PURE__*/React.createElement("g", null, /*#__PURE__*/React.createElement("polyline", {
+      points: [...sp, sp[0]].map(p => `${p.x},${p.y}`).join(" "),
+      fill: "none",
+      stroke: C.accent,
+      strokeWidth: 1.6,
+      opacity: 0.55
+    }), marks, edges, sp.map((p, i) => /*#__PURE__*/React.createElement("circle", {
+      key: "v" + i,
+      cx: p.x,
+      cy: p.y,
+      r: selVert === i ? 9 : 7.5,
+      fill: selVert === i ? C.accent : "#fff",
+      stroke: selVert === i ? "#fff" : C.accent,
+      strokeWidth: 2.2
+    })));
+  })(), dimLines.map((d, i) => {
     const a = S(d.a),
       b = S(d.b);
     labels.push({
@@ -4170,8 +5921,7 @@ function CabinPlanner() {
     small: true,
     onClick: () => {
       const w = 5000,
-        h = 7000,
-        t = doc.wallT;
+        h = 7000;
       const P = [{
         x: -w / 2,
         y: -h / 2
@@ -4185,27 +5935,24 @@ function CabinPlanner() {
         x: -w / 2,
         y: h / 2
       }];
-      const walls = P.map((p, i) => {
-        const q = P[(i + 1) % 4];
-        return {
-          id: uid(),
-          x1: p.x,
-          y1: p.y,
-          x2: q.x,
-          y2: q.y,
-          t
-        };
-      });
-      commit(prev => ({
+      const room = {
+        id: uid(),
+        name: doc.name,
+        points: P,
+        ceiling: defaultCeiling(),
+        autoWalls: {
+          mode: "centre",
+          t: doc.wallT
+        }
+      };
+      commit(prev => rebuildRoomWalls({
         ...prev,
-        walls,
-        rooms: [{
-          id: uid(),
-          name: doc.name,
-          points: P,
-          ceiling: defaultCeiling()
-        }]
-      }));
+        rooms: [...prev.rooms, room]
+      }, room));
+      setSel({
+        kind: "room",
+        id: room.id
+      });
       setFitReq(n => n + 1);
     }
   }, t("starter")))), /*#__PURE__*/React.createElement("div", {
@@ -4538,6 +6285,18 @@ function CabinPlanner() {
       } : w)
     }))
   }), /*#__PURE__*/React.createElement(NumField, {
+    label: t("wallHeight"),
+    value: selWall.room ? "—" : selWall.h || doc.wallH || DEF_WALL_H,
+    suffix: "mm",
+    w: "45%",
+    onChange: v => commit(prev => ({
+      ...prev,
+      walls: prev.walls.map(w => w.id === selWall.id ? {
+        ...w,
+        h: clamp(v, 300, 12000)
+      } : w)
+    }))
+  }), /*#__PURE__*/React.createElement(NumField, {
     label: t("length"),
     value: Math.round(Math.hypot(selWall.x2 - selWall.x1, selWall.y2 - selWall.y1)),
     suffix: "mm",
@@ -4643,19 +6402,66 @@ function CabinPlanner() {
       onChange: v => up({
         off: clamp(v, 0, L - selOpen.w)
       })
+    })), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 10
+      }
+    }, /*#__PURE__*/React.createElement(NumField, {
+      label: t("sill"),
+      value: Math.round(openSill(selOpen)),
+      suffix: "mm",
+      w: "50%",
+      onChange: v => up({
+        sill: clamp(v, 0, openHead(selOpen) - 100)
+      })
+    }), /*#__PURE__*/React.createElement(NumField, {
+      label: t("head"),
+      value: Math.round(openHead(selOpen)),
+      suffix: "mm",
+      w: "50%",
+      onChange: v => up({
+        head: clamp(v, openSill(selOpen) + 100, 6000)
+      })
     })));
   })(), selRoom && (() => {
     const c = selRoom.ceiling || defaultCeiling();
-    const up = patch => commit(prev => ({
-      ...prev,
-      rooms: prev.rooms.map(r => r.id === selRoom.id ? {
-        ...r,
-        ceiling: {
-          ...c,
-          ...patch
-        }
-      } : r)
+    const pts = selRoom.points;
+    const nP = pts.length;
+    const aw = selRoom.autoWalls;
+    /* every room edit reruns the wall wrap, so walls follow the shape live */
+    const upRoom = fn => commit(prev => {
+      const rooms = prev.rooms.map(r => r.id === selRoom.id ? fn(r) : r);
+      return rebuildRoomWalls({
+        ...prev,
+        rooms
+      }, rooms.find(r => r.id === selRoom.id));
+    });
+    const up = patch => upRoom(r => ({
+      ...r,
+      ceiling: {
+        ...c,
+        ...patch
+      }
     }));
+    const moveVert = (x, y) => upRoom(r => ({
+      ...r,
+      points: r.points.map((q, k) => k === selVert ? {
+        x,
+        y
+      } : q)
+    }));
+    const setEdge = (which, L) => {
+      if (selVert == null || !(L > 0)) return;
+      const anchor = pts[(selVert + (which === "in" ? -1 : 1) + nP) % nP];
+      const cur = pts[selVert];
+      const dx = cur.x - anchor.x,
+        dy = cur.y - anchor.y;
+      const d = Math.hypot(dx, dy) || 1;
+      moveVert(anchor.x + dx / d * L, anchor.y + dy / d * L);
+    };
+    const lenIn = selVert == null ? 0 : Math.hypot(pts[selVert].x - pts[(selVert - 1 + nP) % nP].x, pts[selVert].y - pts[(selVert - 1 + nP) % nP].y);
+    const lenOut = selVert == null ? 0 : Math.hypot(pts[selVert].x - pts[(selVert + 1) % nP].x, pts[selVert].y - pts[(selVert + 1) % nP].y);
     return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
@@ -4680,7 +6486,8 @@ function CabinPlanner() {
         fontSize: 14,
         padding: "7px 9px",
         outline: "none",
-        flex: 1
+        flex: 1,
+        minWidth: 0
       }
     }), /*#__PURE__*/React.createElement("span", {
       style: {
@@ -4688,11 +6495,130 @@ function CabinPlanner() {
         fontSize: 12,
         color: C.accent2
       }
-    }, (polyArea(selRoom.points) / 1e6).toFixed(2), " m²"), /*#__PURE__*/React.createElement(Btn, {
+    }, (polyArea(pts) / 1e6).toFixed(2), " m²"), /*#__PURE__*/React.createElement(Btn, {
       small: true,
       tone: "bad",
       onClick: delSel
-    }, t("del"))), /*#__PURE__*/React.createElement(Label, null, t("ceiling")), /*#__PURE__*/React.createElement("div", {
+    }, t("del"))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 6
+      }
+    }, [["shape", t("shape")], ["ceiling", t("ceiling")], ["walls", t("wallsTab")]].map(([k, l]) => /*#__PURE__*/React.createElement(Btn, {
+      key: k,
+      small: true,
+      wide: true,
+      active: roomTab === k,
+      onClick: () => setRoomTab(k)
+    }, l))), roomTab === "shape" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontFamily: MONO,
+        fontSize: 10.5,
+        color: C.dim,
+        lineHeight: 1.5
+      }
+    }, t("shapeHint")), selVert != null && pts[selVert] && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "baseline",
+        gap: 10
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 13,
+        fontWeight: 600
+      }
+    }, t("corner"), " ", selVert + 1, " ", t("of"), " ", nP), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: MONO,
+        fontSize: 11.5,
+        color: nearMultiple(interiorAngle(pts, selVert), 45, 0.4) ? C.accent2 : C.dim
+      }
+    }, t("cornerAngle"), " ", Math.round(interiorAngle(pts, selVert) * 10) / 10, "°"), /*#__PURE__*/React.createElement(Btn, {
+      small: true,
+      tone: "bad",
+      style: {
+        marginLeft: "auto",
+        opacity: nP > 3 ? 1 : 0.4
+      },
+      onClick: () => {
+        if (nP <= 3) return;
+        upRoom(r => ({
+          ...r,
+          points: r.points.filter((_, k) => k !== selVert)
+        }));
+        setSelVert(null);
+      }
+    }, t("delCorner"))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 10
+      }
+    }, /*#__PURE__*/React.createElement(NumField, {
+      label: "X",
+      value: Math.round(pts[selVert].x),
+      suffix: "mm",
+      w: "50%",
+      onChange: v => moveVert(v, pts[selVert].y)
+    }), /*#__PURE__*/React.createElement(NumField, {
+      label: "Y",
+      value: Math.round(pts[selVert].y),
+      suffix: "mm",
+      w: "50%",
+      onChange: v => moveVert(pts[selVert].x, v)
+    })), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 10
+      }
+    }, /*#__PURE__*/React.createElement(NumField, {
+      label: t("edgePrev"),
+      value: Math.round(lenIn),
+      suffix: "mm",
+      w: "50%",
+      onChange: v => setEdge("in", v)
+    }), /*#__PURE__*/React.createElement(NumField, {
+      label: t("edgeNext"),
+      value: Math.round(lenOut),
+      suffix: "mm",
+      w: "50%",
+      onChange: v => setEdge("out", v)
+    })))), roomTab === "walls" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Label, null, t("autoWall")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 6
+      }
+    }, [["none", t("none")], ["inside", t("inside")], ["centre", t("centre")], ["outside", t("outside")]].map(([k, l]) => /*#__PURE__*/React.createElement(Btn, {
+      key: k,
+      small: true,
+      wide: true,
+      active: (aw ? aw.mode : "none") === k,
+      onClick: () => upRoom(r => ({
+        ...r,
+        autoWalls: k === "none" ? null : {
+          mode: k,
+          t: r.autoWalls && r.autoWalls.t || doc.wallT
+        }
+      }))
+    }, l))), aw && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(NumField, {
+      label: t("thickness"),
+      value: aw.t,
+      suffix: "mm",
+      onChange: v => upRoom(r => ({
+        ...r,
+        autoWalls: {
+          ...r.autoWalls,
+          t: clamp(v, 20, 800)
+        }
+      }))
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontFamily: MONO,
+        fontSize: 10.5,
+        color: C.dim,
+        lineHeight: 1.5
+      }
+    }, t("keepsDoors")))), roomTab === "ceiling" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         gap: 6
@@ -4755,14 +6681,7 @@ function CabinPlanner() {
       onClick: () => up({
         axis: "x"
       })
-    }, "Y"), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontFamily: MONO,
-        fontSize: 10.5,
-        color: C.dim,
-        marginLeft: "auto"
-      }
-    }, c.mode === "gable" ? Math.round((c.ridge ?? 0.5) * 100) + "%" : "")), c.mode === "gable" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(Label, {
+    }, "Y")), c.mode === "gable" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(Label, {
       style: {
         marginBottom: 5
       }
@@ -4778,7 +6697,7 @@ function CabinPlanner() {
         width: "100%",
         accentColor: C.accent
       }
-    }))));
+    })))));
   })()), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
@@ -4790,7 +6709,7 @@ function CabinPlanner() {
       flexShrink: 0
     }
   }, tools.map(([k, g, l]) => {
-    const active = mode === k || k === "furniture" && mode === "place" || k === "image" && mode === "calibrate" || k === "section" && showSection;
+    const active = mode === k || k === "furniture" && mode === "place" || k === "image" && mode === "calibrate" || k === "section" && showSection || k === "view3d" && show3d;
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: () => {
@@ -4806,6 +6725,10 @@ function CabinPlanner() {
         }
         if (k === "section") {
           setShowSection(v => !v);
+          return;
+        }
+        if (k === "view3d") {
+          setShow3d(true);
           return;
         }
         if (k === "export") {
@@ -4844,7 +6767,15 @@ function CabinPlanner() {
         fontWeight: 600
       }
     }, l));
-  })), /*#__PURE__*/React.createElement(Sheet, {
+  })), show3d && /*#__PURE__*/React.createElement(View3D, {
+    doc: doc,
+    defs: defs,
+    lang: lang,
+    t: t,
+    onClose: () => setShow3d(false),
+    invert: invert3d,
+    setInvert: setInvert3d
+  }), /*#__PURE__*/React.createElement(Sheet, {
     open: sheet === "library",
     onClose: () => setSheet(null),
     title: t("library")
