@@ -1102,11 +1102,12 @@ const STR = {
     hPlace: "Tap where the piece goes",
     hCal1: "Tap the first end of a known dimension",
     hCal2: "Tap the other end",
-    hCal3: "Enter the real length",
     tipDoor: "Tap on a wall to add an opening.",
     tipScale: "Now set the scale: pick two points you know the real distance between.",
     tipScaled: "Scale set. Trace the walls over the image.",
-    askMm: "Real distance between the two points, in mm:",
+    hCal3: "Type the real distance between the two points",
+    setScaleGo: "Set",
+    badLen: "Enter a length in millimetres, for example 1200.",
     xport: "Export",
     paper: "Paper",
     scale: "Scale",
@@ -1274,11 +1275,12 @@ const STR = {
     hPlace: "Napauta kohtaa johon kaluste tulee",
     hCal1: "Napauta tunnetun mitan ensimmäistä päätä",
     hCal2: "Napauta toista päätä",
-    hCal3: "Syötä todellinen pituus",
     tipDoor: "Napauta seinää lisätäksesi aukon.",
     tipScale: "Aseta nyt mittakaava: valitse kaksi pistettä joiden välimatkan tiedät.",
     tipScaled: "Mittakaava asetettu. Piirrä seinät kuvan päälle.",
-    askMm: "Pisteiden todellinen välimatka millimetreinä:",
+    hCal3: "Kirjoita pisteiden todellinen välimatka",
+    setScaleGo: "Aseta",
+    badLen: "Syötä pituus millimetreinä, esimerkiksi 1200.",
     xport: "Vie",
     paper: "Paperi",
     scale: "Mittakaava",
@@ -3970,6 +3972,7 @@ function CabinPlanner() {
   const [placingDef, setPlacingDef] = useState(null);
   const [tape, setTape] = useState(null);
   const [calib, setCalib] = useState(null);
+  const [calibMm, setCalibMm] = useState("1000");
   const [grid, setGrid] = useState(50);
   const [showGrid, setShowGrid] = useState(true);
   const [showDims, setShowDims] = useState(true);
@@ -4245,6 +4248,10 @@ function CabinPlanner() {
 
   /* ---- pointer handling ---- */
   const onDown = e => {
+    /* Buttons and fields float inside the canvas element, so their pointer events
+       bubble here too. Without this, tapping "Set" also counted as a tap on the
+       drawing and restarted whatever you were doing. */
+    if (e.target && e.target.closest && e.target.closest("[data-ui]")) return;
     const p = local(e);
     const now = Date.now();
     /* Drop pointers we never saw released — a lost pointerup (OS gesture, long-press
@@ -4966,6 +4973,14 @@ function CabinPlanner() {
       im.src = fr.result;
     };
     fr.readAsDataURL(file);
+  };
+  const doCalibrate = () => {
+    const n = parseFloat(String(calibMm).replace(",", "."));
+    if (isNaN(n) || n <= 0) {
+      setHint(tr(lang, "badLen"));
+      return;
+    }
+    applyCalibration(n);
   };
   const applyCalibration = realMm => {
     if (!calib?.a || !calib?.b || !doc.image) return;
@@ -5912,6 +5927,7 @@ function CabinPlanner() {
       maxWidth: 300
     }
   }, t("emptyHelp")), /*#__PURE__*/React.createElement("div", {
+    "data-ui": true,
     style: {
       display: "flex",
       gap: 8,
@@ -6000,6 +6016,7 @@ function CabinPlanner() {
       fontVariantNumeric: "tabular-nums"
     }
   }, bar.mm >= 1000 ? bar.mm / 1000 + " m" : bar.mm + " mm"))), /*#__PURE__*/React.createElement("div", {
+    "data-ui": true,
     style: {
       position: "absolute",
       right: 10,
@@ -6037,6 +6054,7 @@ function CabinPlanner() {
       letterSpacing: "0.06em"
     }
   }, "FIT")), (draft || mode === "wall" || mode === "room" || mode === "door" || mode === "calibrate" || mode === "place") && /*#__PURE__*/React.createElement("div", {
+    "data-ui": true,
     style: {
       position: "absolute",
       left: 12,
@@ -6061,15 +6079,38 @@ function CabinPlanner() {
   }, mode === "wall" && (draft ? t("hWall2") : t("hWall")), mode === "room" && (draft ? t("hRoom2") : t("hRoom")), mode === "door" && t("hDoor"), mode === "place" && t("hPlace"), mode === "calibrate" && (!calib ? t("hCal1") : !calib.b ? t("hCal2") : t("hCal3"))), draft && /*#__PURE__*/React.createElement(Btn, {
     small: true,
     onClick: () => finishDraft(draft)
-  }, t("finish")), calib?.b && /*#__PURE__*/React.createElement(Btn, {
+  }, t("finish")), calib?.b && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
+    value: calibMm,
+    inputMode: "decimal",
+    autoFocus: true,
+    onChange: e => setCalibMm(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter") doCalibrate();
+    },
+    style: {
+      width: 74,
+      background: C.chrome,
+      border: `1px solid ${C.line}`,
+      borderRadius: 7,
+      color: C.text,
+      fontFamily: MONO,
+      fontSize: 16,
+      padding: "5px 8px",
+      outline: "none",
+      textAlign: "right",
+      fontVariantNumeric: "tabular-nums"
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: MONO,
+      fontSize: 11,
+      color: C.dim
+    }
+  }, "mm"), /*#__PURE__*/React.createElement(Btn, {
     small: true,
     active: true,
-    onClick: () => {
-      const v = prompt(t("askMm"), "1000");
-      const n = parseFloat((v || "").replace(",", "."));
-      if (!isNaN(n) && n > 0) applyCalibration(n);
-    }
-  }, t("enterMm")), /*#__PURE__*/React.createElement(Btn, {
+    onClick: doCalibrate
+  }, t("setScaleGo"))), /*#__PURE__*/React.createElement(Btn, {
     small: true,
     onClick: () => {
       setDraft(null);
@@ -6078,6 +6119,7 @@ function CabinPlanner() {
       setMode("select");
     }
   }, "✕")), hint && /*#__PURE__*/React.createElement("div", {
+    "data-ui": true,
     onPointerDown: () => setHint(""),
     style: {
       position: "absolute",
