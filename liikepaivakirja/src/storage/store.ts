@@ -200,3 +200,13 @@ export async function requestPersistence(): Promise<boolean> {
   }
   return false;
 }
+
+/* Structured (non-JSON) values. IndexedDB stores anything structured-cloneable,
+   which includes FileSystemDirectoryHandle — that handle cannot be JSON'd, so it
+   bypasses the JSON layer above. */
+export function getObj<T = any>(key: string): Promise<T | undefined> {
+  return run<T | undefined>("readonly", (s) => s.get(key));
+}
+export function setObj(key: string, value: any): Promise<unknown> {
+  return run("readwrite", (s) => s.put(value, key));
+}

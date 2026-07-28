@@ -10,7 +10,7 @@ the Capacitor shell, so none of this work is throwaway.
 ```bash
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 18 tests: domain invariants + a real mount test
+npm test               # 33 tests: domain invariants, backup logic, mount tests
 npm run build          # -> dist/         (GitHub Pages)
 npm run build:single   # -> dist-single/index.html (one portable file)
 npm run typecheck      # informational, see "Type checking" below
@@ -32,8 +32,12 @@ Exactly three things are not verbatim, all in `tools/postslice.py` or new files:
 3. `src/storage/` is new (see below).
 
 Re-running `python3 tools/slice.py && python3 tools/postslice.py` from a
-directory containing `liikepaivakirja.jsx` regenerates `src/` identically, so the
-refactor is auditable rather than trusted.
+directory containing `liikepaivakirja.jsx` reproduced `src/` exactly at the time
+of the port, which is what made the refactor auditable rather than trusted.
+
+**`src/` is now the source of truth.** Features added since the port (the daily
+backup, for one) live only there, so re-running the slicer would discard them.
+Treat `tools/` as a historical audit record, not a build step.
 
 ## Layout
 
@@ -123,12 +127,46 @@ turning `strict` on now would mean editing thousands of lines we just proved wer
 moved verbatim. Tighten the UI module by module afterwards, with the tests as a
 net.
 
+## Daily file backup
+
+Because browser storage is evictable, the app asks for a file backup once a day.
+A dismissible banner appears at the top of **Tänään** when no backup exists for
+today; dismissing it stops the nag until tomorrow only. Settings live at the
+bottom of **Muokkaa**.
+
+The mechanism depends on what the browser actually allows:
+
+| Tier | Where | Behaviour |
+| --- | --- | --- |
+| Folder | Chromium desktop | Pick a folder once. Writes `liikepaivakirja-YYYY-MM-DD.json` plus a stable `liikepaivakirja-latest.json`, reads the file back to verify, prunes dated files older than 30 days. Silent after the first grant. |
+| Download | anywhere | One tap. Lands in the browser's download folder. |
+| Share | iOS/Safari, Android | One tap, then pick the destination in the share sheet. |
+
+Safari ships no File System Access pickers on macOS, iPadOS or iOS in any
+version, and neither do Chrome or Firefox on Android — so the folder tier is
+Chromium-desktop-only, detected at runtime rather than assumed. On iPhone this is
+therefore **a one-tap habit with a reminder, not automation**.
+
+Useful iOS detail: Settings → Safari → Downloads accepts **Other…**, including a
+third-party File Provider. Point it at a synced folder (e.g. a Syncthing client)
+and a one-tap download leaves the device on its own.
+
+Only the folder tier can verify a write, by reading the file back and comparing.
+Download and share record the attempt and say so in the UI — the app does not
+claim a backup it cannot confirm.
+
+Retention pruning also only applies to the folder tier; the other two cannot see
+where the file went.
+
 ## Not included
 
 - **Offline support.** No service worker, so the app needs the network to load
   (data stays local once loaded). Adding `vite-plugin-pwa` is a small job — say
   the word.
-- **A restore UI for the daily snapshots.** `listSnapshots()` and
-  `readSnapshot(date)` exist; nothing calls them yet.
+- **A restore UI**, for either the in-browser snapshots or a backup file.
+  `listSnapshots()` / `readSnapshot(date)` exist and nothing calls them; restoring
+  a file today means the existing Historia import.
+- **Verification for the download and share tiers.** Not possible from a web
+  page — the browser does not report where the file landed.
 - Any of the big-screen analytics discussed separately. This build is the
   existing app, faithfully, on your own hosting.

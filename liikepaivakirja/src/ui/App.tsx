@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { EMPTY_DOSE, LIB_BY_ID, addDays, emptyLog, goalMinOf, goalOf, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizeSymptoms, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid } from "../domain";
 import { deleteKey, hasStore, loadJSON, saveJSON, saveJSONDebounced, saveJSONNow } from "../storage/store";
 import { C, FONT } from "../styles/tokens";
+import { BackupBanner, BackupSettings } from "./Backup";
 import { EditView } from "./Edit";
 import { HistoryView } from "./History";
 import { ExportModal, ImportModal, StepsModal } from "./Modals";
@@ -470,6 +471,8 @@ export default function App() {
           ))}
         </div>
 
+        {tab === "today" && <BackupBanner exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} />}
+
         {tab === "today" && (
           <TodayView
             key={selKey}
@@ -535,6 +538,8 @@ export default function App() {
             logDoseChange={logDoseChange}
           />
         )}
+
+        {tab === "edit" && <BackupSettings exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} />}
 
         {hasStore && (
           <p style={{ marginTop: 26, textAlign: "center", fontSize: 12, color: C.inkFaint }}>
