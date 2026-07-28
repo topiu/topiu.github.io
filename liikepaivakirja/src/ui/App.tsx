@@ -8,6 +8,7 @@ import { EditView } from "./Edit";
 import { HistoryView } from "./History";
 import { ExportModal, ImportModal, StepsModal } from "./Modals";
 import { ReportModal } from "./Report";
+import { FirstRunCard, HelpButton, HelpModal } from "./Help";
 import { OfflineNote, OfflineSettings, UpdateBanner } from "./Update";
 import { TodayView } from "./Today";
 import { Style } from "./common";
@@ -28,6 +29,8 @@ export default function App() {
   const [canUndoImport, setCanUndoImport] = useState(false);
   const [stepsOpen, setStepsOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpDismissed, setHelpDismissed] = useState(false);
   const [programUndo, setProgramUndo] = useState<any>(null);
   const undoTimer = useRef<any>(null);
 
@@ -72,6 +75,8 @@ export default function App() {
       setPsfs(normalizePsfs(await loadJSON("physio-psfs", null)));
       const q = await loadJSON("physio-questions", "");
       setQuestions(typeof q === "string" ? q : "");
+      const ui = await loadJSON("physio-ui", null);
+      setHelpDismissed(!!(ui && ui.helpDismissed));
       const undo = await loadJSON("physio-undo", null);
       if (undo && Array.isArray(undo.exercises)) {
         undoRef.current = undo;
@@ -190,6 +195,26 @@ export default function App() {
   const psfsRename = useCallback((id, name) => mutatePsfs((p) => psfsRenameActivity(p, id, name), true), [mutatePsfs]);
   const psfsRetire = useCallback((id, v) => mutatePsfs((p) => psfsRetireActivity(p, id, v)), [mutatePsfs]);
   const psfsForget = useCallback((id) => mutatePsfs((p) => psfsForgetActivity(p, id)), [mutatePsfs]);
+
+  /* An empty diary means a first run — or a lost one; the card offers a restore
+     for exactly that reason. Gated on `loading` so it cannot flash on every
+     startup before IndexedDB has answered. */
+  const isFresh = useMemo(
+    () =>
+      !loading &&
+      Object.keys(logs).length === 0 &&
+      marks.length === 0 &&
+      Object.keys((psfs && psfs.entries) || {}).length === 0,
+    [loading, logs, marks, psfs]
+  );
+
+  /* Dismissal is remembered, so someone who cleared their data and does not want
+     the welcome again is not told twice. A UI preference, not diary data, so it is
+     absent from DATA_KEYS and from the export. */
+  const dismissHelp = useCallback(() => {
+    setHelpDismissed(true);
+    saveJSON("physio-ui", { helpDismissed: true });
+  }, []);
 
   /* ---- questions for the appointment: free text, debounced like the note ---- */
   const onQuestions = useCallback((v) => {
@@ -600,11 +625,16 @@ export default function App() {
     <div className="ptf" style={{ background: C.bg, minHeight: "100vh", fontFamily: FONT, color: C.ink }}>
       <Style />
       <div style={{ maxWidth: 520, margin: "0 auto", padding: "22px 16px 48px" }}>
-        <header style={{ marginBottom: 18 }}>
-          <div style={{ fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: C.pineDeep, fontWeight: 600 }}>
-            Fysioterapian seuranta
+        <header style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: C.pineDeep, fontWeight: 600 }}>
+              Fysioterapian seuranta
+            </div>
+            <h1 style={{ margin: "3px 0 0", fontSize: 27, fontWeight: 600, letterSpacing: "-0.02em" }}>Liikepäiväkirja</h1>
           </div>
-          <h1 style={{ margin: "3px 0 0", fontSize: 27, fontWeight: 600, letterSpacing: "-0.02em" }}>Liikepäiväkirja</h1>
+          {/* Always reachable: "what is PSFS" and "where is my data" are questions
+              that come up months in, not only on the first run. */}
+          <HelpButton onClick={() => setHelpOpen(true)} />
         </header>
 
         {/* Tabs */}
@@ -618,6 +648,13 @@ export default function App() {
         </div>
 
         {tab === "today" && <UpdateBanner />}
+        {tab === "today" && isFresh && !helpDismissed && (
+          <FirstRunCard
+            onOpenHelp={() => setHelpOpen(true)}
+            onGoEdit={() => setTab("edit")}
+            onDismiss={dismissHelp}
+          />
+        )}
         {tab === "today" && (
           <BackupBanner exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} questions={questions} />
         )}
@@ -728,6 +765,7 @@ export default function App() {
       {exportOpen && (
         <ExportModal exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} questions={questions} onClose={() => setExportOpen(false)} />
       )}
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
       {reportOpen && (
         <ReportModal
           exercises={exercises}

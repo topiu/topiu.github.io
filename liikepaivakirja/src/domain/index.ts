@@ -4,6 +4,7 @@ export * from "./defaults";
 export * from "./dose";
 export * from "./exportfmt";
 export * from "./freq";
+export * from "./help";
 export * from "./library";
 export * from "./load";
 export * from "./normalize";

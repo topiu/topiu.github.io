@@ -10,7 +10,7 @@ the Capacitor shell, so none of this work is throwaway.
 ```bash
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 128 tests: domain invariants, backup logic, mount tests
+npm test               # 137 tests: domain invariants, backup logic, mount tests
 npm run build          # -> dist/         (GitHub Pages)
 npm run build:single   # -> dist-single/index.html (one portable file)
 npm run typecheck      # informational, see "Type checking" below
@@ -46,7 +46,7 @@ src/
   domain/      pure logic, no React, no platform APIs — fully typed, tested
                dates dose taxonomy regions structures library defaults
                steps normalize load exportfmt num
-               freq psfs report reportview restore
+               freq help psfs report reportview restore
                                                  (+ index.ts barrel)
   storage/     store.ts   IndexedDB, same contract as window.storage
                backup.ts  rolling daily snapshots
@@ -54,7 +54,7 @@ src/
                share.ts     share-sheet + directory-picker capability
                sw.ts        service worker registration, opt-out, BUILD_ID
   ui/          App Today History Edit Modals Library BodyMap common
-               Psfs Report Restore Update
+               Help Psfs Report Restore Update
   styles/      tokens.ts   the palette C and FONT
 tests/         domain.test.ts  smoke.test.tsx
 tools/         slice.py  postslice.py
@@ -70,7 +70,10 @@ never depend on a later flush, an immediate write supersedes any queued debounce
 write to the same key, and only high-frequency text input is debounced.
 
 The data keys are `physio-config`, `physio-logs`, `physio-marks`, `physio-undo`,
-`physio-psfs` and `physio-questions`. The first four are byte-identical to the
+`physio-psfs` and `physio-questions`, plus `physio-ui` for dismissed-hint state
+and `physio-offline` in localStorage for the offline opt-out. The last two are
+per-device preferences rather than diary data, so they are deliberately outside
+`DATA_KEYS`, the export and the snapshots. The first four are byte-identical to the
 artifact build, so an export from either side still imports into the other;
 isolation comes from a dedicated IndexedDB database name instead.
 That matters because GitHub Pages puts every project you publish on the same
@@ -325,6 +328,46 @@ Deliberate consequences:
 The old `toggleSymptom` and `setSeverity` handlers are gone rather than kept
 alongside. Two ways to reach the same state is how the two controls drifted apart
 in the first place.
+
+## Ohjeet ja ensimmäinen käynnistys
+
+Two separate things, because they answer different questions at different times.
+
+**The first-run card** appears on Tänään only while the diary is genuinely empty —
+no logged days, no milestones, no PSFS assessments — and retires itself the moment
+anything is recorded. Three numbered steps and two buttons; no modal, nothing
+gated behind it. Onboarding that outstays its welcome is clutter on the one screen
+that has to stay fast.
+
+It is gated on the load having finished, so it cannot flash on every startup
+before IndexedDB has answered, and dismissal is remembered in `physio-ui`.
+
+It also offers a **restore**, which covers the case the emptiness check cannot
+distinguish: an empty diary is either a new install or a lost one, and the second
+wants a backup file rather than a welcome.
+
+**The help panel** is reachable from the `?` in the header at any time, not only
+when empty. The questions it answers — what is PSFS, where does my data live, what
+is in the report — come up months in. Sections start collapsed and only one opens
+at a time, so it reads as a list of questions instead of a wall of prose. BUILD_ID
+is at the bottom.
+
+Content lives in `domain/help.ts` as data rather than in JSX, for the same reason
+`taxonomy.ts` does: it can then be asserted against. Three of those assertions are
+deliberate tripwires rather than coverage —
+
+- the storage section must still say the data is only on this device **and** must
+  still say `varmuuskopio`;
+- the offline section must still contain `?sw=off`;
+- paragraphs are capped in length and sections in number.
+
+Help nobody reads because it is too long is worse than no help, and "tidying up
+for length" is exactly how the backup warning would quietly go missing.
+
+There is a second audience worth keeping in mind for the wording: a
+physiotherapist who has been sent the URL or a report and wants to know what they
+are looking at. That is why "Mikä tämä on" leads with what the app does *not*
+claim to be — it records, it does not judge whether pain is acceptable.
 
 ## Palautus
 
