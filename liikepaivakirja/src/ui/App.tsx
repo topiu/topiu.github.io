@@ -8,7 +8,7 @@ import { EditView } from "./Edit";
 import { HistoryView } from "./History";
 import { ExportModal, ImportModal, StepsModal } from "./Modals";
 import { ReportModal } from "./Report";
-import { OfflineNote, UpdateBanner } from "./Update";
+import { OfflineNote } from "./Update";
 import { TodayView } from "./Today";
 import { Style } from "./common";
 
@@ -517,7 +517,6 @@ export default function App() {
           ))}
         </div>
 
-        {tab === "today" && <UpdateBanner />}
         {tab === "today" && (
           <BackupBanner exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} questions={questions} />
         )}

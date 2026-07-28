@@ -8,7 +8,6 @@ import { render, screen, waitFor, fireEvent, within } from "@testing-library/rea
 import App from "../src/ui/App";
 import { loadJSON, saveJSONNow } from "../src/storage/store";
 import { maybeSnapshot } from "../src/storage/backup";
-import { __resetSwState, __setSwState } from "../src/platform/sw";
 
 describe("app mounts on IndexedDB", () => {
   it("renders the Finnish UI and seeds default data", async () => {
@@ -110,26 +109,6 @@ describe("clinician report", () => {
     expect(portal.getByText(/Miten luvut on laskettu/)).toBeTruthy();
     /* and it carries the PSFS activity added by the test above */
     expect(portal.getByText("Sukkien pukeminen")).toBeTruthy();
-  });
-});
-
-describe("update banner", () => {
-  it("stays out of the way until a new version is actually waiting", async () => {
-    __resetSwState();
-    const { container } = render(<App />);
-    const q = within(container);
-    await waitFor(() => expect(q.getByText("Tänään")).toBeTruthy());
-    expect(q.queryByText("Uusi versio ladattu")).toBeNull();
-
-    __setSwState({ supported: true, updateWaiting: true });
-    await waitFor(() => expect(q.getByText("Uusi versio ladattu")).toBeTruthy());
-    expect(q.getByText("Päivitä")).toBeTruthy();
-
-    /* dismissing is allowed: "later" is a real answer when you opened the app to
-       log a set, and the worker keeps waiting either way */
-    fireEvent.click(q.getByLabelText("Piilota"));
-    await waitFor(() => expect(q.queryByText("Uusi versio ladattu")).toBeNull());
-    __resetSwState();
   });
 });
 

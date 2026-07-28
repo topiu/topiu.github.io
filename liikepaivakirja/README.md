@@ -10,7 +10,7 @@ the Capacitor shell, so none of this work is throwaway.
 ```bash
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 90 tests: domain invariants, backup logic, mount tests
+npm test               # 89 tests: domain invariants, backup logic, mount tests
 npm run build          # -> dist/         (GitHub Pages)
 npm run build:single   # -> dist-single/index.html (one portable file)
 npm run typecheck      # informational, see "Type checking" below
@@ -51,7 +51,7 @@ src/
                backup.ts  rolling daily snapshots
   platform/    download.ts  Blob download + clipboard
                share.ts     share-sheet + directory-picker capability
-               sw.ts        service worker registration and update state
+               sw.ts        service worker teardown + online/offline status
   ui/          App Today History Edit Modals Library BodyMap common
                Psfs Report Restore Update
   styles/      tokens.ts   the palette C and FONT
@@ -163,37 +163,36 @@ purges it, and the UI says which is which. The JSON export is now **version 8**
 and carries `psfs`; a v7 file still imports (a missing key normalizes to an empty
 PSFS), and an older build reading a v8 file just ignores the field.
 
-## Offline
+## Offline — withdrawn
 
-`vite-plugin-pwa` (workbox `generateSW`) precaches the shell — `index.html`, the
-JS bundle, the icons, the manifest — so after the first successful load the app
-starts with no network. `navigateFallback` points at `index.html` so a cold start
-resolves offline too.
+Offline support was published on 28.7.2026 and withdrawn the same day.
 
-Two details that are not the defaults, both deliberate:
+It was shipped with two defects that mattered more than the feature. It could not
+be tested at runtime here — jsdom has no `ServiceWorkerContainer`, which was
+stated at the time and should have stopped the release rather than accompanied
+it. And it had no way out: on an iOS Home Screen install there are no developer
+tools, so the remedy an ordinary person reaches for is Settings → Safari →
+clear website data, and **that destroys the diary**. Shipping a component that
+can only be removed by an action that loses the data is the wrong trade for an
+app whose whole premise is that the data is yours and stays put.
 
-**Scope.** `sw.js` is emitted next to `index.html`, so at `/liikepaivakirja/` its
-scope is `/liikepaivakirja/`. This matters on a user site: a root-scoped worker
-would silently take over `landing/`, `mokkipohja.html` and every future sibling
-project on the same `github.io` origin.
+`public/sw.js` is now a **self-destroying worker** published at the same URL the
+generated one occupied. A browser holding the old worker fetches it on its next
+update check, installs it, then clears Cache Storage, unregisters itself and
+reloads any open window. `platform/sw.ts` also unregisters anything left under
+this scope on startup, for the case where the page loads but a worker lingers.
 
-**Updates are offered, not applied.** `injectRegister: null` turns off the
-plugin's automatic registration; `platform/sw.ts` registers by hand with
-`skipWaiting: false`. `autoUpdate` would swap the assets under a running session,
-and this app writes to IndexedDB continuously — debounced note text, a queued
-dose edit — so a reload mid-write is a small but real way to lose a keystroke.
-Silent waiting is the opposite failure, where a deployed fix never reaches
-anyone. So a banner appears on Tänään, `flushAll()` runs when you tap it, and
-only then does the new worker take over. An update check fires whenever the app
-becomes visible or the connection returns; GitHub Pages deploys are manual and
-infrequent, so no polling timer.
+Neither path touches IndexedDB. Cache Storage and IndexedDB are separate stores;
+the diary lives in the latter and is not involved in any of this.
 
-Offline capability arrives on the **second** load — the worker installs in the
-background on the first. The footer says
-"Offline-tila valmistuu seuraavaan käynnistykseen" until it is genuinely ready,
-rather than claiming a capability it does not yet have. The single-file build has
-no worker: that target exists to be opened from disk, where there is nothing to
-cache and no origin to scope to.
+**Do not delete `public/sw.js`** until every device that ever loaded the offline
+build has opened the app once with a network connection. Deleting it makes the
+browser 404 the script, which also retires the worker eventually, but far less
+promptly on iOS.
+
+If offline is attempted again it needs, before anything is deployed: a build flag
+so it can be disabled without a deploy, a visible "poista offline-tila" button in
+the app, and a manual test on a real Home Screen install.
 
 ## Palautus
 
@@ -298,10 +297,8 @@ where the file went.
 
 - **Verification for the download and share tiers.** Not possible from a web
   page — the browser does not report where the file landed.
-- **A test for `platform/sw.ts` registration.** The state-to-UI path is covered
-  by a mount test that drives the store directly; exercising `register()` itself
-  would mean mocking the whole ServiceWorkerContainer lifecycle for little in
-  return. Verify offline by hand: load once, then Network → Offline, then reload.
+- **Offline support.** Withdrawn, see above. The app needs the network to load;
+  data stays local once loaded.
 - **Selective restore.** A restore is all-or-nothing. Merging one day out of a
   snapshot into current data is a different and much harder feature.
 - **A next-day pain field.** Discussed but not built: pain *during* / *right
