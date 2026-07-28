@@ -9,21 +9,28 @@ permissions:
 concurrency:
   group: pages
   cancel-in-progress: true
+defaults:
+  run:
+    working-directory: liikepaivakirja
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
-      - run: npm install
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: liikepaivakirja/package-lock.json
+      - run: npm ci
       - run: npm test
       - run: npm run build
         env:
           BASE_PATH: /
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
-        with: { path: dist }
+        with:
+          path: liikepaivakirja/dist
   deploy:
     needs: build
     runs-on: ubuntu-latest
