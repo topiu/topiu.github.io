@@ -1,17 +1,22 @@
 /* domain/exportfmt — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { humanDate } from "./dates";
 import { doseLabel, emptyLog, goalOf } from "./dose";
+import { psfsEntry, psfsMean } from "./psfs";
 import { SEVERITY, qualityLabel } from "./taxonomy";
 
 /* ------------------------------------------------------------------ */
 /*  Export builders                                                    */
 /* ------------------------------------------------------------------ */
-export function buildCSV(exercises, symptoms, logs, marks) {
+export function buildCSV(exercises, symptoms, logs, marks, psfs) {
   const SEP = ";";
   const esc = (v) => {
     const s = String(v == null ? "" : v);
     return /[";\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
+  /* PSFS is fortnightly, so most rows are blank — that is the honest shape and
+     a spreadsheet filter handles it. Retired activities stay as columns so the
+     history they hold does not vanish from the sheet. */
+  const psfsCols = psfs && psfs.activities ? psfs.activities : [];
   const header = [
     "Päivä",
     ...exercises.map((e) => {
@@ -20,6 +25,8 @@ export function buildCSV(exercises, symptoms, logs, marks) {
       return d ? `${e.name} (${d})${arch}` : `${e.name}${arch}`;
     }),
     ...symptoms.map((s) => `Oire: ${s.name}${s.archived ? " [arkistoitu]" : ""}`),
+    ...psfsCols.map((a) => `PSFS: ${a.name}`),
+    ...(psfsCols.length ? ["PSFS keskiarvo"] : []),
     "Askeleet",
     "Muistiinpano",
     "Merkkipaalut",
@@ -28,7 +35,11 @@ export function buildCSV(exercises, symptoms, logs, marks) {
   (marks || []).forEach((m) => {
     (marksByDate[m.date] = marksByDate[m.date] || []).push(m.text);
   });
-  const dateSet = new Set([...Object.keys(logs), ...Object.keys(marksByDate)]);
+  const dateSet = new Set([
+    ...Object.keys(logs),
+    ...Object.keys(marksByDate),
+    ...Object.keys((psfs && psfs.entries) || {}),
+  ]);
   const dates = [...dateSet].sort();
   const lines = [header];
   dates.forEach((k) => {
@@ -49,10 +60,15 @@ export function buildCSV(exercises, symptoms, logs, marks) {
       const base = sev ? sev.label : "kyllä";
       return q ? `${base} / ${qualityLabel(q)}` : base;
     });
+    const pe = psfsEntry(psfs, k);
+    const pm = psfsMean(pe);
+    const ps = psfsCols.map((a) => (pe && pe[a.id] != null ? pe[a.id] : ""));
     lines.push([
       humanDate(k),
       ...ex,
       ...sy,
+      ...ps,
+      ...(psfsCols.length ? [pm ? pm.mean : ""] : []),
       l.steps || "",
       (l.note || "").replace(/\r?\n/g, " "),
       (marksByDate[k] || []).join(" | "),
@@ -61,9 +77,21 @@ export function buildCSV(exercises, symptoms, logs, marks) {
   return "\uFEFF" + lines.map((r) => r.map(esc).join(SEP)).join("\r\n");
 }
 
-export function buildJSON(exercises, symptoms, logs, marks) {
+/* version 8 adds `psfs`. A v7 file imports cleanly — parseImport normalizes a
+   missing key to an empty PSFS — and a v8 file read by an older build simply
+   ignores the field, so both directions stay safe. */
+export function buildJSON(exercises, symptoms, logs, marks, psfs) {
   return JSON.stringify(
-    { app: "Liikepäiväkirja", exportedAt: new Date().toISOString(), version: 7, exercises, symptoms, logs, marks: marks || [] },
+    {
+      app: "Liikepäiväkirja",
+      exportedAt: new Date().toISOString(),
+      version: 8,
+      exercises,
+      symptoms,
+      logs,
+      marks: marks || [],
+      psfs: psfs || { activities: [], entries: {} },
+    },
     null,
     2
   );

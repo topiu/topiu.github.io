@@ -1,12 +1,13 @@
 /* ui/App — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { EMPTY_DOSE, LIB_BY_ID, addDays, emptyLog, goalMinOf, goalOf, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizeSymptoms, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid } from "../domain";
+import { EMPTY_DOSE, LIB_BY_ID, addDays, emptyLog, emptyPsfs, goalMinOf, goalOf, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizePsfs, normalizeSymptoms, psfsAddActivity, psfsForgetActivity, psfsRenameActivity, psfsRetireActivity, psfsSetScore, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid } from "../domain";
 import { deleteKey, hasStore, loadJSON, saveJSON, saveJSONDebounced, saveJSONNow } from "../storage/store";
 import { C, FONT } from "../styles/tokens";
 import { BackupBanner, BackupSettings } from "./Backup";
 import { EditView } from "./Edit";
 import { HistoryView } from "./History";
 import { ExportModal, ImportModal, StepsModal } from "./Modals";
+import { ReportModal } from "./Report";
 import { TodayView } from "./Today";
 import { Style } from "./common";
 
@@ -18,11 +19,14 @@ export default function App() {
   const [symptoms, setSymptoms] = useState([]);
   const [logs, setLogs] = useState({});
   const [marks, setMarks] = useState([]);
+  const [psfs, setPsfs] = useState(emptyPsfs());
+  const [questions, setQuestions] = useState("");
   const [selected, setSelected] = useState(startOfToday());
   const [exportOpen, setExportOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [canUndoImport, setCanUndoImport] = useState(false);
   const [stepsOpen, setStepsOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   const today = startOfToday();
   const selKey = keyOf(selected);
@@ -32,7 +36,7 @@ export default function App() {
 
   /* mirror latest state so import can snapshot it without stale closures */
   const stateRef = useRef({});
-  stateRef.current = { exercises, symptoms, logs, marks };
+  stateRef.current = { exercises, symptoms, logs, marks, psfs, questions };
   const undoRef = useRef(null);
 
   /* ---- initial load + migration ---- */
@@ -62,6 +66,9 @@ export default function App() {
       }
       const rawMarks = await loadJSON("physio-marks", []);
       setMarks(normalizeMarks(rawMarks));
+      setPsfs(normalizePsfs(await loadJSON("physio-psfs", null)));
+      const q = await loadJSON("physio-questions", "");
+      setQuestions(typeof q === "string" ? q : "");
       const undo = await loadJSON("physio-undo", null);
       if (undo && Array.isArray(undo.exercises)) {
         undoRef.current = undo;
@@ -82,6 +89,7 @@ export default function App() {
       symptoms: stateRef.current.symptoms || [],
       logs: stateRef.current.logs || {},
       marks: stateRef.current.marks || [],
+      psfs: stateRef.current.psfs || emptyPsfs(),
     };
     undoRef.current = prev;
     setCanUndoImport(true);
@@ -90,6 +98,7 @@ export default function App() {
     setSymptoms(res.sy);
     setLogs(res.logs);
     setMarks(res.marks || []);
+    setPsfs(res.psfs || emptyPsfs());
     setSelected(startOfToday());
 
     /* write sequentially so the four keys don't race the rate limiter,
@@ -98,6 +107,7 @@ export default function App() {
     await saveJSONNow("physio-config", { exercises: res.ex, symptoms: res.sy });
     await saveJSONNow("physio-logs", res.logs);
     await saveJSONNow("physio-marks", res.marks || []);
+    await saveJSONNow("physio-psfs", res.psfs || emptyPsfs());
   }, []);
 
   const undoImport = useCallback(async () => {
@@ -107,10 +117,12 @@ export default function App() {
     setSymptoms(prev.symptoms || []);
     setLogs(prev.logs || {});
     setMarks(prev.marks || []);
+    setPsfs(prev.psfs || emptyPsfs());
     setSelected(startOfToday());
     await saveJSONNow("physio-config", { exercises: prev.exercises || [], symptoms: prev.symptoms || [] });
     await saveJSONNow("physio-logs", prev.logs || {});
     await saveJSONNow("physio-marks", prev.marks || []);
+    await saveJSONNow("physio-psfs", prev.psfs || emptyPsfs());
     undoRef.current = null;
     setCanUndoImport(false);
     try {
@@ -148,6 +160,34 @@ export default function App() {
     },
     [addMark]
   );
+
+  /* ---- PSFS ----
+     Each of these is a discrete action, so it writes immediately rather than
+     waiting on a flush; renaming an activity is text input, so it debounces. */
+  const mutatePsfs = useCallback((fn, debounced?) => {
+    setPsfs((prev) => {
+      const next = fn(prev);
+      (debounced ? saveJSONDebounced : saveJSON)("physio-psfs", next);
+      return next;
+    });
+  }, []);
+  const psfsScore = useCallback(
+    (id, value) => mutatePsfs((p) => psfsSetScore(p, selKey, id, value)),
+    [mutatePsfs, selKey]
+  );
+  const psfsAdd = useCallback(
+    (name) => mutatePsfs((p) => psfsAddActivity(p, name, keyOf(startOfToday()))),
+    [mutatePsfs]
+  );
+  const psfsRename = useCallback((id, name) => mutatePsfs((p) => psfsRenameActivity(p, id, name), true), [mutatePsfs]);
+  const psfsRetire = useCallback((id, v) => mutatePsfs((p) => psfsRetireActivity(p, id, v)), [mutatePsfs]);
+  const psfsForget = useCallback((id) => mutatePsfs((p) => psfsForgetActivity(p, id)), [mutatePsfs]);
+
+  /* ---- questions for the appointment: free text, debounced like the note ---- */
+  const onQuestions = useCallback((v) => {
+    setQuestions(v);
+    saveJSONDebounced("physio-questions", v);
+  }, []);
 
   /* ---- log mutation ---- */
   const updateLog = useCallback((key, mutate) => {
@@ -471,7 +511,7 @@ export default function App() {
           ))}
         </div>
 
-        {tab === "today" && <BackupBanner exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} />}
+        {tab === "today" && <BackupBanner exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} />}
 
         {tab === "today" && (
           <TodayView
@@ -494,6 +534,14 @@ export default function App() {
             marks={marks.filter((m) => m.date === selKey)}
             addMark={(text) => addMark(selKey, text, false)}
             removeMark={removeMark}
+            psfs={psfs}
+            dateKey={selKey}
+            todayKey={keyOf(today)}
+            psfsScore={psfsScore}
+            psfsAdd={psfsAdd}
+            psfsRename={psfsRename}
+            psfsRetire={psfsRetire}
+            psfsForget={psfsForget}
           />
         )}
 
@@ -514,6 +562,7 @@ export default function App() {
             onExport={() => setExportOpen(true)}
             onImport={() => setImportOpen(true)}
             onImportSteps={() => setStepsOpen(true)}
+            onReport={() => setReportOpen(true)}
           />
         )}
 
@@ -539,7 +588,7 @@ export default function App() {
           />
         )}
 
-        {tab === "edit" && <BackupSettings exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} />}
+        {tab === "edit" && <BackupSettings exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} />}
 
         {hasStore && (
           <p style={{ marginTop: 26, textAlign: "center", fontSize: 12, color: C.inkFaint }}>
@@ -549,7 +598,19 @@ export default function App() {
       </div>
 
       {exportOpen && (
-        <ExportModal exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} onClose={() => setExportOpen(false)} />
+        <ExportModal exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} onClose={() => setExportOpen(false)} />
+      )}
+      {reportOpen && (
+        <ReportModal
+          exercises={exercises}
+          symptoms={symptoms}
+          logs={logs}
+          marks={marks}
+          psfs={psfs}
+          questions={questions}
+          setQuestions={onQuestions}
+          onClose={() => setReportOpen(false)}
+        />
       )}
       {importOpen && <ImportModal onApply={applyImport} onUndo={undoImport} canUndo={canUndoImport} onClose={() => setImportOpen(false)} />}
       {stepsOpen && <StepsModal onApply={applySteps} onClose={() => setStepsOpen(false)} />}

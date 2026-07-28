@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ChevronLeft, ChevronRight, Check, Plus, Minus, X, Zap, HelpCircle } from "lucide-react";
 import { QUALITIES, SEVERITY, WD_LONG, addDays, dayDoseOf, doseLabel, goalMinOf, goalOf, isMin } from "../domain";
+import { PsfsCard } from "./Psfs";
 import { C } from "../styles/tokens";
 import { Card, Empty, IconBtn, MiniBtn, SectionLabel } from "./common";
 
@@ -27,6 +28,14 @@ export function TodayView({
   marks,
   addMark,
   removeMark,
+  psfs,
+  dateKey,
+  todayKey,
+  psfsScore,
+  psfsAdd,
+  psfsRename,
+  psfsRetire,
+  psfsForget,
 }) {
   const doneCount = exercises.filter((e) =>
     isMin(e) ? (log.mins[e.id] || 0) >= goalMinOf(log, e) : (log.sets[e.id] || 0) >= goalOf(log, e)
@@ -136,6 +145,20 @@ export function TodayView({
           );
         })}
       </Card>
+
+      {/* Function — fortnightly, so it sits below the daily work and stays
+          collapsed unless an assessment is actually due */}
+      <PsfsCard
+        psfs={psfs}
+        dateKey={dateKey}
+        todayKey={todayKey}
+        isToday={isToday}
+        setScore={psfsScore}
+        addActivity={psfsAdd}
+        renameActivity={psfsRename}
+        retireActivity={psfsRetire}
+        forgetActivity={psfsForget}
+      />
 
       {/* Steps */}
       <SectionLabel>Askeleet</SectionLabel>

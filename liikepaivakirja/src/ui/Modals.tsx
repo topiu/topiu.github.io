@@ -9,14 +9,14 @@ import { IconBtn } from "./common";
 /* ================================================================== */
 /*  EXPORT MODAL                                                       */
 /* ================================================================== */
-export function ExportModal({ exercises, symptoms, logs, marks, onClose }) {
+export function ExportModal({ exercises, symptoms, logs, marks, psfs, onClose }) {
   const [fmt, setFmt] = useState("csv");
   const [msg, setMsg] = useState("");
   const taRef = useRef(null);
   const count = Object.keys(logs).length;
   const text = useMemo(
-    () => (fmt === "csv" ? buildCSV(exercises, symptoms, logs, marks) : buildJSON(exercises, symptoms, logs, marks)),
-    [fmt, exercises, symptoms, logs, marks]
+    () => (fmt === "csv" ? buildCSV(exercises, symptoms, logs, marks, psfs) : buildJSON(exercises, symptoms, logs, marks, psfs)),
+    [fmt, exercises, symptoms, logs, marks, psfs]
   );
   const filename = `liikepaivakirja-${keyOf(startOfToday())}.${fmt}`;
 
@@ -257,7 +257,7 @@ export function ImportModal({ onApply, onUndo, canUndo, onClose }) {
               {preview ? (
                 <div style={{ marginTop: 12, background: C.surfaceSoft, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12 }}>
                   <div style={{ fontSize: 13.5, color: C.ink, lineHeight: 1.5 }}>
-                    Löytyi <b>{preview.counts.ex}</b> liikettä, <b>{preview.counts.sy}</b> oiretta, <b>{preview.counts.days}</b> päivän merkinnät ja <b>{preview.counts.marks}</b> merkkipaalua.
+                    Löytyi <b>{preview.counts.ex}</b> liikettä, <b>{preview.counts.sy}</b> oiretta, <b>{preview.counts.days}</b> päivän merkinnät, <b>{preview.counts.marks}</b> merkkipaalua ja <b>{preview.counts.psfs}</b> PSFS-arviota.
                   </div>
                   <div style={{ fontSize: 12.5, color: C.amber, fontWeight: 600, marginTop: 6 }}>
                     Tämä korvaa kaikki nykyiset tiedot.

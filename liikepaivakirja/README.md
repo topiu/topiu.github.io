@@ -10,7 +10,7 @@ the Capacitor shell, so none of this work is throwaway.
 ```bash
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 33 tests: domain invariants, backup logic, mount tests
+npm test               # 74 tests: domain invariants, backup logic, mount tests
 npm run build          # -> dist/         (GitHub Pages)
 npm run build:single   # -> dist-single/index.html (one portable file)
 npm run typecheck      # informational, see "Type checking" below
@@ -45,11 +45,12 @@ Treat `tools/` as a historical audit record, not a build step.
 src/
   domain/      pure logic, no React, no platform APIs — fully typed, tested
                dates dose taxonomy regions structures library defaults
-               steps normalize load exportfmt num  (+ index.ts barrel)
+               steps normalize load exportfmt num
+               psfs report reportview            (+ index.ts barrel)
   storage/     store.ts   IndexedDB, same contract as window.storage
                backup.ts  rolling daily snapshots
   platform/    download.ts  Blob download + clipboard
-  ui/          App Today History Edit Modals Library BodyMap common
+  ui/          App Today History Edit Modals Library BodyMap Psfs Report common
   styles/      tokens.ts   the palette C and FONT
 tests/         domain.test.ts  smoke.test.tsx
 tools/         slice.py  postslice.py
@@ -64,8 +65,10 @@ even though IndexedDB has no rate limit: discrete actions write immediately and
 never depend on a later flush, an immediate write supersedes any queued debounced
 write to the same key, and only high-frequency text input is debounced.
 
-The **data keys are unchanged** (`physio-config`, `physio-logs`, `physio-marks`,
-`physio-undo`); isolation comes from a dedicated IndexedDB database name instead.
+The data keys are `physio-config`, `physio-logs`, `physio-marks`, `physio-undo`,
+`physio-psfs` and `physio-questions`. The first four are byte-identical to the
+artifact build, so an export from either side still imports into the other;
+isolation comes from a dedicated IndexedDB database name instead.
 That matters because GitHub Pages puts every project you publish on the same
 `https://<user>.github.io` origin, sharing one storage namespace.
 
@@ -86,6 +89,71 @@ your data. Three layers, in decreasing order of how much you should trust them:
 On iPhone, **add the site to your Home Screen**. Safari is the most aggressive
 about clearing script-writable storage for sites you haven't opened in a while,
 and installed web apps are treated far more kindly.
+
+## Raportti fysioterapeutille
+
+The CSV export answers "give me everything". A physiotherapist has about two
+minutes and a different question, so **Historia → Raportti fysioterapeutille**
+builds a one-page summary: adherence, function, symptoms, dose changes,
+milestones, recent notes, and a free-text block for what you want to ask.
+
+Three ways out, because exactly one of them works everywhere this app runs:
+
+| Action | Where it works | Notes |
+| --- | --- | --- |
+| Tulosta | Desktop, mobile Safari **tabs** | Real PDF via the browser's print dialog. |
+| Lataa .html | Everywhere | Self-contained file, no external assets. Opens on any machine, prints from there, attaches to an email. |
+| Kopioi | Everywhere | Plain text for a message or email body. |
+
+An iOS Home Screen web app has no share button and no print, so `window.print()`
+is a convenience, not the mechanism — the downloadable `.html` is the path that
+always works, and the UI says so.
+
+`domain/report.ts` builds the model, `domain/reportview.ts` renders it to
+strings. The preview, the printed page and the downloaded file all come from the
+same `reportBodyHTML` output, so the preview cannot lie about what gets sent. The
+modal mounts through a portal to `<body>` so that one print rule —
+`body > *:not(.rpt-portal) { display: none }` — hides the entire app.
+
+Three things the numbers do deliberately:
+
+1. Adherence is scored against the dose **in force on each day**, via the
+   existing per-day snapshot. Changing a prescription never rewrites history.
+2. Each exercise's denominator starts the day it first appears in the log, not at
+   the start of the range, so an exercise added last week does not read as three
+   weeks of missed sessions. The page prints that start date.
+3. Nothing is interpreted. No trend arrows, no "improving", no advice. The single
+   interpretive statement on the page is the PSFS band, and that threshold is
+   published rather than ours.
+
+## PSFS — toimintakyky
+
+The **Patient-Specific Functional Scale**, on Tänään. You name three to five
+everyday things the problem is currently getting in the way of, then score each
+0 ("en pysty lainkaan") to 10 ("kuten ennen vaivaa"). The mean is the number a
+physiotherapist reads, and they know the instrument by that name.
+
+It fits this app because it is the one validated measure whose *content* the
+patient supplies — like the exercise and symptom lists already here. A fixed
+region-specific questionnaire (Oswestry, HAGOS, iHOT) would have to ship
+verbatim, is longer, and is licence-encumbered; the PSFS ships as a scale and a
+rule, and the Finnish wording in `ui/Psfs.tsx` is ours.
+
+Two design points:
+
+- **Fortnightly, not daily.** `psfsDue` enforces a 14-day interval and the card
+  collapses to one line when nothing is due. The daily screen has to stay fast,
+  and daily scoring would manufacture variation that looks like signal.
+- **Two different thresholds, not one.** Minimal important differences for the
+  *mean* are about 1.3 / 2.3 / 2.7 (small / medium / large). The minimal
+  detectable change for a *single* activity is about 3 points — so single
+  activities are shown as raw numbers and never labelled "parantunut". Conflating
+  the two is the standard way to read improvement into noise.
+
+Retiring an activity keeps its scored history in the report; "poista kokonaan"
+purges it, and the UI says which is which. The JSON export is now **version 8**
+and carries `psfs`; a v7 file still imports (a missing key normalizes to an empty
+PSFS), and an older build reading a v8 file just ignores the field.
 
 ## Deploying to GitHub Pages
 
@@ -168,5 +236,9 @@ where the file went.
   a file today means the existing Historia import.
 - **Verification for the download and share tiers.** Not possible from a web
   page — the browser does not report where the file landed.
-- Any of the big-screen analytics discussed separately. This build is the
-  existing app, faithfully, on your own hosting.
+- **A next-day pain field.** Discussed but not built: pain *during* / *right
+  after* / *24 h after* a session, which is what a physio actually asks and what
+  would sharpen the existing lag analysis.
+- **Charts in the report.** The PSFS grid is a table on purpose — it prints
+  cleanly in black and white and survives being photocopied.
+- Any of the other big-screen analytics discussed separately.

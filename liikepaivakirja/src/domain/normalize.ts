@@ -3,6 +3,7 @@ import { DATE_RE } from "./dates";
 import { EMPTY_DOSE, isEmptyLog, targetSets } from "./dose";
 import { SOURCES } from "./library";
 import { toNum, uid } from "./num";
+import { normalizePsfs } from "./psfs";
 import { REGION_BY_ID } from "./regions";
 import { STRUCT_BY_ID } from "./structures";
 import { EX_TYPE_IDS, QUALITY_IDS } from "./taxonomy";
@@ -187,13 +188,22 @@ export function parseImport(text) {
   ex.forEach((e) => (exById[e.id] = e));
   const logs = normalizeLogs(data.logs || {}, exById);
   const marks = normalizeMarks(data.marks);
+  /* absent in v7 and earlier files; an empty PSFS is the correct reading */
+  const psfs = normalizePsfs(data.psfs);
   return {
     ok: true,
     ex,
     sy,
     logs,
     marks,
-    counts: { ex: ex.length, sy: sy.length, days: Object.keys(logs).length, marks: marks.length },
+    psfs,
+    counts: {
+      ex: ex.length,
+      sy: sy.length,
+      days: Object.keys(logs).length,
+      marks: marks.length,
+      psfs: Object.keys(psfs.entries).length,
+    },
   };
 }
 

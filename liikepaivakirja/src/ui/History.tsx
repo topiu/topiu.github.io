@@ -1,6 +1,6 @@
 /* ui/History — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useEffect, useMemo } from "react";
-import { ChevronRight, X, Zap, Download, Upload } from "lucide-react";
+import { ChevronRight, X, Zap, Download, Upload, FileText } from "lucide-react";
 import { QUALITIES, addDays, dayLoad, goalOf, humanDate, keyOf, parseKey, qualityLabel, shortDate, startOfWeek } from "../domain";
 import { C } from "../styles/tokens";
 import { BodyLoadSection } from "./BodyMap";
@@ -9,7 +9,7 @@ import { Card, Empty, IconBtn, SectionLabel, Stat } from "./common";
 /* ================================================================== */
 /*  HISTORY                                                            */
 /* ================================================================== */
-export function HistoryView({ days14, logs, symptoms, allSymptoms, exercises, completeCountOf, totalEx, streak, trained14, symptomFree14, today, marks, onExport, onImport, onImportSteps }) {
+export function HistoryView({ days14, logs, symptoms, allSymptoms, exercises, completeCountOf, totalEx, streak, trained14, symptomFree14, today, marks, onExport, onImport, onImportSteps, onReport }) {
   const [range, setRange] = useState(14); // 14 | 30 | 90 | 0 (kaikki)
   const [drill, setDrill] = useState(null); // symptom object for drill-down modal
   const [diaryLen, setDiaryLen] = useState(14);
@@ -236,6 +236,11 @@ export function HistoryView({ days14, logs, symptoms, allSymptoms, exercises, co
           </Card>
         </>
       )}
+
+      <button className="tap" onClick={onReport}
+        style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 10, padding: "14px", borderRadius: 13, border: "none", background: C.pine, color: "#fff", fontSize: 15.5, fontWeight: 600 }}>
+        <FileText size={18} /> Raportti fysioterapeutille
+      </button>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <button className="tap" onClick={onExport}

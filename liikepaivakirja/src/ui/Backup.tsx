@@ -27,7 +27,7 @@ import { download } from "../platform/download";
 
 type Status = { kind: "idle" | "busy" | "ok" | "warn" | "error"; text?: string };
 
-function useRunBackup({ exercises, symptoms, logs, marks }) {
+function useRunBackup({ exercises, symptoms, logs, marks, psfs }) {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const timer = useRef<any>(null);
 
@@ -55,7 +55,7 @@ function useRunBackup({ exercises, symptoms, logs, marks }) {
     if (!handle) return false;
     if ((await folderPermission(handle)) !== "granted") return false;
 
-    const text = buildJSON(exercises, symptoms, logs, marks);
+    const text = buildJSON(exercises, symptoms, logs, marks, psfs);
     const res = await writeBackupToFolder(handle, backupName(todayKey), text);
     if (!res.ok) return false;
     void pruneFolder(handle, todayKey, BACKUP_KEEP_DAYS);
@@ -66,14 +66,14 @@ function useRunBackup({ exercises, symptoms, logs, marks }) {
       hasFolder: true,
     });
     return true;
-  }, [exercises, symptoms, logs, marks]);
+  }, [exercises, symptoms, logs, marks, psfs]);
 
   /* Interactive path — must be called from a user gesture. */
   const run = useCallback(
     async (opts: { preferred?: "download" | "share" } = {}) => {
       const todayKey = keyOf(startOfToday());
       const filename = backupName(todayKey);
-      const text = buildJSON(exercises, symptoms, logs, marks);
+      const text = buildJSON(exercises, symptoms, logs, marks, psfs);
       flash({ kind: "busy", text: "Tallennetaan…" });
 
       /* 1. a folder, if we have one and can get permission now */
@@ -122,7 +122,7 @@ function useRunBackup({ exercises, symptoms, logs, marks }) {
         return false;
       }
     },
-    [exercises, symptoms, logs, marks, flash]
+    [exercises, symptoms, logs, marks, psfs, flash]
   );
 
   return { status, run, runSilent };
@@ -139,9 +139,9 @@ function statusColor(kind: Status["kind"]) {
 /*  Banner (Tänään)                                                    */
 /* ------------------------------------------------------------------ */
 
-export function BackupBanner({ exercises, symptoms, logs, marks }) {
+export function BackupBanner({ exercises, symptoms, logs, marks, psfs }) {
   const state = useBackupState();
-  const { status, run, runSilent } = useRunBackup({ exercises, symptoms, logs, marks });
+  const { status, run, runSilent } = useRunBackup({ exercises, symptoms, logs, marks, psfs });
   const todayKey = keyOf(startOfToday());
   const tried = useRef(false);
 
@@ -277,9 +277,9 @@ function TextBtn({ children, onClick, disabled, tone }: any) {
   );
 }
 
-export function BackupSettings({ exercises, symptoms, logs, marks }) {
+export function BackupSettings({ exercises, symptoms, logs, marks, psfs }) {
   const state = useBackupState();
-  const { status, run } = useRunBackup({ exercises, symptoms, logs, marks });
+  const { status, run } = useRunBackup({ exercises, symptoms, logs, marks, psfs });
   const todayKey = keyOf(startOfToday());
   const [folderName, setFolderName] = useState<string | null>(null);
   const canPick = hasDirectoryPicker();

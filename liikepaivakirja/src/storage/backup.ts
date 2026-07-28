@@ -19,7 +19,7 @@
 import { getRaw, setRaw, delRaw, listKeys } from "./store";
 
 const PREFIX = "snapshot:";
-const KEYS = ["physio-config", "physio-logs", "physio-marks"];
+const KEYS = ["physio-config", "physio-logs", "physio-marks", "physio-psfs", "physio-questions"];
 const KEEP = 14;
 
 function todayKey(): string {
