@@ -1,36 +1,82 @@
 name: Deploy to GitHub Pages
+
+# Publishes a landing page at the root plus every app at its own subpath:
+#
+#   landing/            -> https://topiu.github.io/
+#   liikepaivakirja/    -> https://topiu.github.io/liikepaivakirja/
+#   <any-folder>/       -> https://topiu.github.io/<any-folder>/
+#
+# Convention over configuration: any immediate subfolder containing a
+# package.json is treated as an app, built with BASE_PATH=/<folder>/ and copied
+# to _site/<folder>/. Adding an app means adding a folder — this file does not
+# need to change. Requirements on an app folder: a "build" script that honours
+# BASE_PATH and writes to dist/, and a "test" script (use "test": "true" if it
+# has none).
+
 on:
   push: { branches: [main] }
   workflow_dispatch:
+
 permissions:
   contents: read
   pages: write
   id-token: write
+
 concurrency:
   group: pages
   cancel-in-progress: true
-defaults:
-  run:
-    working-directory: liikepaivakirja
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: liikepaivakirja/package-lock.json
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
-        env:
-          BASE_PATH: /liikepaivakirja
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Assemble site
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          mkdir -p _site
+          if [ -d landing ]; then cp -r landing/. _site/; fi
+
+          apps=()
+          for pkg in */package.json; do
+            app="$(dirname "$pkg")"
+            echo "::group::build $app"
+            ( cd "$app" \
+              && npm ci --no-audit --no-fund \
+              && npm test \
+              && BASE_PATH="/$app/" npm run build )
+            mkdir -p "_site/$app"
+            cp -r "$app/dist/." "_site/$app/"
+            apps+=("$app")
+            echo "::endgroup::"
+          done
+
+          if [ ${#apps[@]} -eq 0 ]; then
+            list=""
+          else
+            list="$(printf '"%s",' "${apps[@]}" | sed 's/,$//')"
+          fi
+          printf '{"built":"%s","apps":[%s]}\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$list" > _site/apps.json
+
+          echo "publishing:"
+          find _site -maxdepth 2 -mindepth 1 | sort
+
       - uses: actions/configure-pages@v5
+
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: liikepaivakirja/dist
+          path: _site
+
   deploy:
     needs: build
     runs-on: ubuntu-latest
