@@ -22,9 +22,14 @@ permissions:
   pages: write
   id-token: write
 
+# Only one deployment at a time, but an in-progress one is never cancelled.
+# Cancelling a run that has already entered actions/deploy-pages can leave the
+# Pages deployment unfinished, and a site with no completed deployment serves
+# GitHub's default page. This is what the official Pages starter workflow means
+# by "do NOT cancel in-progress runs"; `true` here was a real defect.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -37,6 +42,14 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: '**/package-lock.json'
+
+      # Before the build on purpose. This is what tells Pages to serve the
+      # Actions artifact rather than the repository branch. If it ran after the
+      # build and the build failed, the source could stay on branch serving —
+      # which publishes the *unbuilt* index.html, whose script tag points at
+      # /src/main.tsx and 404s. Running it first means a failed build leaves the
+      # previous good deployment in place instead.
+      - uses: actions/configure-pages@v5
 
       - name: Assemble site
         run: |
@@ -71,7 +84,40 @@ jobs:
           echo "publishing:"
           find _site -maxdepth 2 -mindepth 1 | sort
 
-      - uses: actions/configure-pages@v5
+      # A broken publish used to be silent: the page loaded and simply did
+      # nothing. Every local asset an app's index.html references must exist in
+      # the artifact, and no page may still point at unbuilt sources. Failing
+      # here keeps the last good deployment live instead of replacing it with
+      # something that cannot start.
+      - name: Verify the assembled site
+        run: |
+          set -euo pipefail
+          fail=0
+          for d in _site/*/; do
+            app="$(basename "$d")"
+            page="$d/index.html"
+            [ -f "$page" ] || continue
+
+            if grep -qE '(src|href)="[^"]*/src/' "$page"; then
+              echo "::error::$app/index.html still points at unbuilt sources"
+              fail=1
+            fi
+
+            while IFS= read -r ref; do
+              case "$ref" in
+                ""|http*|//*|data:*|\#*|mailto:*) continue ;;
+                /*) target="_site${ref}" ;;
+                *)  target="${d}${ref}" ;;
+              esac
+              target="${target%%\?*}"; target="${target%%\#*}"
+              if [ ! -e "$target" ]; then
+                echo "::error::$app references $ref but $target is not in the artifact"
+                fail=1
+              fi
+            done < <(grep -oE '(src|href)="[^"]+"' "$page" | sed -E 's/^[^"]*"//; s/"$//')
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          echo "verified: every referenced asset is present"
 
       - uses: actions/upload-pages-artifact@v3
         with:
