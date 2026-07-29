@@ -16,4 +16,5 @@ export * from "./reportview";
 export * from "./restore";
 export * from "./steps";
 export * from "./structures";
+export * from "./swipe";
 export * from "./taxonomy";

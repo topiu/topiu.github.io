@@ -9,6 +9,7 @@ import { HistoryView } from "./History";
 import { ExportModal, ImportModal, StepsModal } from "./Modals";
 import { ReportModal } from "./Report";
 import { FirstRunCard, HelpButton, HelpModal } from "./Help";
+import { useDaySwipe } from "./swipe";
 import { OfflineNote, OfflineSettings, UpdateBanner } from "./Update";
 import { TodayView } from "./Today";
 import { Style } from "./common";
@@ -211,6 +212,14 @@ export default function App() {
   /* Dismissal is remembered, so someone who cleared their data and does not want
      the welcome again is not told twice. A UI preference, not diary data, so it is
      absent from DATA_KEYS and from the export. */
+  /* Swiping the day. Alternating-day programmes mean the previous day is
+     consulted constantly, and two taps on a 20px arrow is the wrong cost for
+     that. Forward is bounded at today, matching the arrow that is disabled
+     there rather than inventing a second rule. */
+  const goPrevDay = useCallback(() => setSelected((d) => addDays(d, -1)), []);
+  const goNextDay = useCallback(() => setSelected((d) => addDays(d, 1)), []);
+  const swipe = useDaySwipe({ onPrev: goPrevDay, onNext: goNextDay, canNext: !isToday });
+
   const dismissHelp = useCallback(() => {
     setHelpDismissed(true);
     saveJSON("physio-ui", { helpDismissed: true });
@@ -660,6 +669,10 @@ export default function App() {
         )}
 
         {tab === "today" && (
+          <div {...swipe.handlers} style={swipe.paneStyle} className={swipe.bumpClass}>
+          {/* keyed so the incoming day is a fresh element and the slide-in
+              actually runs; the outer pane persists so it keeps the handlers */}
+          <div key={selKey} className={swipe.enterClass}>
           <TodayView
             key={selKey}
             selected={selected}
@@ -693,6 +706,8 @@ export default function App() {
             programUndo={programUndo}
             undoProgram={undoProgram}
           />
+          </div>
+          </div>
         )}
 
         {tab === "history" && (

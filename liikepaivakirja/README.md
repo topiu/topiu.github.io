@@ -10,7 +10,7 @@ the Capacitor shell, so none of this work is throwaway.
 ```bash
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 137 tests: domain invariants, backup logic, mount tests
+npm test               # 156 tests: domain invariants, backup logic, mount tests
 npm run build          # -> dist/         (GitHub Pages)
 npm run build:single   # -> dist-single/index.html (one portable file)
 npm run typecheck      # informational, see "Type checking" below
@@ -46,7 +46,7 @@ src/
   domain/      pure logic, no React, no platform APIs — fully typed, tested
                dates dose taxonomy regions structures library defaults
                steps normalize load exportfmt num
-               freq help psfs report reportview restore
+               freq help psfs report reportview restore swipe
                                                  (+ index.ts barrel)
   storage/     store.ts   IndexedDB, same contract as window.storage
                backup.ts  rolling daily snapshots
@@ -54,7 +54,7 @@ src/
                share.ts     share-sheet + directory-picker capability
                sw.ts        service worker registration, opt-out, BUILD_ID
   ui/          App Today History Edit Modals Library BodyMap common
-               Help Psfs Report Restore Update
+               Help Psfs Report Restore Update  swipe.ts (hook)
   styles/      tokens.ts   the palette C and FONT
 tests/         domain.test.ts  smoke.test.tsx
 tools/         slice.py  postslice.py
@@ -368,6 +368,52 @@ There is a second audience worth keeping in mind for the wording: a
 physiotherapist who has been sent the URL or a report and wants to know what they
 are looking at. That is why "Mikä tämä on" leads with what the app does *not*
 claim to be — it records, it does not judge whether pain is acceptable.
+
+## Päivän vaihto pyyhkäisyllä
+
+Swipe left or right anywhere in the Tänään pane to change day: right goes back,
+left forward, the same direction as every photo viewer and as the browser's own
+back gesture. Alternating-day programmes mean the previous day gets consulted
+constantly, and two taps on a 20px arrow was the wrong price for that.
+
+**Coexisting with the browser's own gesture.** iOS Safari's back/forward swipe
+cannot be cancelled — `touchstart` in the edge strip is not reliably cancelable and
+`preventDefault` does not stop the navigation. There is no way to win that
+gesture, so the only option is to decline it: a swipe is ignored unless it *starts*
+more than `SWIPE_EDGE_PX` (44) from either side. That is wider than the ~20px
+Safari actually claims, and equal to Apple's minimum touch target. On a viewport
+too narrow to hold two strips and a usable middle, swiping is disabled entirely
+rather than the strips being shrunk.
+
+**Coexisting with vertical scrolling.** The axis is decided once, from the first
+10px of travel, and then honoured for the rest of the gesture. Re-deciding on
+every move is how swipe handlers end up stealing the end of a flick. An exact
+diagonal goes to the scroller, because scrolling is the more common intent.
+Listeners are therefore all **passive** — nothing here ever needs
+`preventDefault`, since a horizontal drag has nothing to scroll and a vertical one
+is handed straight back.
+
+A swipe commits only if it travelled 56px, was at least 1.6× more horizontal than
+vertical, and took under 900ms. Text fields and anything marked `data-noswipe` keep
+their own horizontal drags, because in a textarea that is a caret selection.
+Multi-touch is ignored so pinch-zoom cannot turn the page, and `touch-action` is
+`pan-y pinch-zoom` rather than `pan-y` so the gesture does not cost anyone the
+ability to zoom.
+
+Two pieces of feedback, both short: the arriving day slides in from the direction
+of travel, and a refused forward swipe on today gets a small rubber-band — without
+it, hitting the boundary is indistinguishable from the app failing to notice.
+Both are disabled under `prefers-reduced-motion`.
+
+**No finger-following drag**, deliberately. It would feel better and it is a lot
+more moving parts — transform tracking, snap-back, interrupted gestures — none of
+which could be felt on a real device from where this was written.
+Threshold-and-commit is the version that cannot jank. Say the word if it feels
+dead in the hand.
+
+The geometry is pure in `domain/swipe.ts` and tested there; `ui/swipe.ts` is the
+touch plumbing, and `tests/dayswipe.test.tsx` drives real touch events through the
+mounted app for each rule above.
 
 ## Palautus
 

@@ -50,7 +50,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     body: [
       "Napauta liikkeen ympyrää, kun päivän annos on tehty, tai lisää sarjoja yksi kerrallaan. Annoksen yli menevät sarjat merkitään erikseen.",
       "”Merkitse ohjelma tehdyksi” täyttää kerralla kaiken tekemättömän sen päivän annoksen mukaan. Se ei vähennä jo kirjattua eikä koske liikkeisiin, joiden viikkotavoite on täynnä. Napautuksen voi kumota heti perään.",
-      "Nuolilla pääsee edellisiin päiviin, joten unohtuneen päivän voi täydentää jälkikäteen.",
+      "Päivää vaihdetaan nuolilla tai pyyhkäisemällä sivusuunnassa: oikealle edelliseen päivään, vasemmalle takaisin. Unohtuneen päivän voi siis täydentää jälkikäteen.",
     ],
   },
   {
