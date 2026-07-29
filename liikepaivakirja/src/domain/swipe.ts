@@ -36,6 +36,15 @@ export const SWIPE_MAX_MS = 900;
    commits to scrolling, large enough not to trip on jitter. */
 export const SWIPE_AXIS_PX = 10;
 
+/* How far the pane may travel. Well short of the viewport: this is not a
+   carousel revealing the neighbouring day, it is the current day yielding, and
+   pretending otherwise would promise content that is not rendered. */
+export const SWIPE_MAX_DRAG_PX = 120;
+
+/* Travel allowed against a boundary. Small and stiff, so the end of the range
+   announces itself during the drag instead of after it. */
+export const SWIPE_BLOCKED_DRAG_PX = 26;
+
 export type SwipeAxis = "undecided" | "horizontal" | "vertical";
 export type SwipeResult = "prev" | "next" | "none";
 
@@ -64,4 +73,34 @@ export function swipeResultOf({ dx, dy, ms }: { dx: number; dy: number; ms: numb
   if (ax < SWIPE_MIN_PX) return "none";
   if (ax < Math.abs(dy) * SWIPE_RATIO) return "none";
   return dx > 0 ? "prev" : "next";
+}
+
+/* Distance the pane should move for a given finger travel.
+ *
+ * One-to-one up to the commit threshold, so the first part of the gesture is
+ * honest direct manipulation, then compressed threefold and capped. The change of
+ * resistance at the threshold is the point: it is felt, and it marks the moment
+ * where releasing would commit, without needing a label to say so.
+ */
+export function dragOffset(dx: number, canNext: boolean): number {
+  if (!Number.isFinite(dx) || dx === 0) return 0; /* returning -0 here would put "-0px" in a transform */
+  const a = Math.abs(dx);
+  const sign = dx > 0 ? 1 : -1;
+
+  /* forward past today is refused, so it gets a stiff short leash rather than a
+     silent no-op */
+  if (sign < 0 && !canNext) return -Math.min(SWIPE_BLOCKED_DRAG_PX, a / 4);
+
+  const eased =
+    a <= SWIPE_MIN_PX ? a : Math.min(SWIPE_MAX_DRAG_PX, SWIPE_MIN_PX + (a - SWIPE_MIN_PX) / 3);
+  return sign * eased;
+}
+
+/* Whether releasing right now would change the day. Drives the live preview, so
+   it must agree with swipeResultOf on everything except velocity, which is not
+   known mid-gesture. */
+export function willCommit(dx: number, canNext: boolean): boolean {
+  if (!Number.isFinite(dx)) return false;
+  if (Math.abs(dx) < SWIPE_MIN_PX) return false;
+  return dx > 0 || canNext;
 }

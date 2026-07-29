@@ -218,7 +218,13 @@ export default function App() {
      there rather than inventing a second rule. */
   const goPrevDay = useCallback(() => setSelected((d) => addDays(d, -1)), []);
   const goNextDay = useCallback(() => setSelected((d) => addDays(d, 1)), []);
-  const swipe = useDaySwipe({ onPrev: goPrevDay, onNext: goNextDay, canNext: !isToday });
+  const swipe = useDaySwipe({
+    selected,
+    todayKey: keyOf(today),
+    onPrev: goPrevDay,
+    onNext: goNextDay,
+    canNext: !isToday,
+  });
 
   const dismissHelp = useCallback(() => {
     setHelpDismissed(true);
@@ -669,10 +675,24 @@ export default function App() {
         )}
 
         {tab === "today" && (
-          <div {...swipe.handlers} style={swipe.paneStyle} className={swipe.bumpClass}>
-          {/* keyed so the incoming day is a fresh element and the slide-in
-              actually runs; the outer pane persists so it keeps the handlers */}
-          <div key={selKey} className={swipe.enterClass}>
+          <div {...swipe.handlers} style={swipe.outerStyle}>
+          {/* Names the day a release would land on, while there is still time to
+              slide back. Positioned over the pane rather than inside it so the
+              drag transform does not carry it along. Updated through a ref, never
+              through state — see ui/swipe.ts. */}
+          {/* One element, not a styled child inside a positioned wrapper: the
+              label is written with textContent, which would replace any child. */}
+          <div
+            ref={swipe.peekRef}
+            data-day-peek=""
+            aria-hidden="true"
+            style={{ position: "absolute", top: 2, left: "50%", transform: "translateX(-50%)", pointerEvents: "none", zIndex: 3, opacity: 0, transition: "opacity .12s ease-out", padding: "4px 11px", borderRadius: 999, background: C.pine, color: "#fff", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", boxShadow: "0 1px 4px rgba(22,36,31,0.18)" }}
+          />
+          {/* Persistent: the transform lives here, so it must not be keyed.
+              The data attribute is a deliberate test hook — the drag is asserted
+              on the DOM, because that is where it is written. */}
+          <div ref={swipe.paneRef} data-day-pane="">
+          <div key={selKey}>
           <TodayView
             key={selKey}
             selected={selected}
@@ -706,6 +726,7 @@ export default function App() {
             programUndo={programUndo}
             undoProgram={undoProgram}
           />
+          </div>
           </div>
           </div>
         )}

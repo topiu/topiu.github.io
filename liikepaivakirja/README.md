@@ -10,7 +10,7 @@ the Capacitor shell, so none of this work is throwaway.
 ```bash
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 156 tests: domain invariants, backup logic, mount tests
+npm test               # 168 tests: domain invariants, backup logic, mount tests
 npm run build          # -> dist/         (GitHub Pages)
 npm run build:single   # -> dist-single/index.html (one portable file)
 npm run typecheck      # informational, see "Type checking" below
@@ -371,49 +371,71 @@ claim to be — it records, it does not judge whether pain is acceptable.
 
 ## Päivän vaihto pyyhkäisyllä
 
-Swipe left or right anywhere in the Tänään pane to change day: right goes back,
-left forward, the same direction as every photo viewer and as the browser's own
-back gesture. Alternating-day programmes mean the previous day gets consulted
-constantly, and two taps on a 20px arrow was the wrong price for that.
+Drag left or right anywhere in the Tänään pane to change day: right goes back,
+left forward, bounded at today. Alternating-day programmes mean the previous day
+gets consulted constantly, and two taps on a 20px arrow was the wrong price.
+
+**The pane follows the finger, and a pill names the day a release would land on.**
+The first version committed on release and *then* played a slide-in, which was the
+wrong way round: the feedback arrived after the decision, so the gesture could not
+teach itself — you had to already know it existed, and know what it would do,
+before it would tell you anything. Now both facts are available while there is
+still time to slide back and abort.
+
+Travel is one-to-one up to the 56px commit threshold, then compressed threefold
+and capped at 120px. The change in resistance is the point: the commit moment is
+*felt*, not just labelled. A forward drag past today gets a stiff 26px leash, so
+the end of the range announces itself during the gesture rather than after it, and
+no pill appears because no promise is being made.
 
 **Coexisting with the browser's own gesture.** iOS Safari's back/forward swipe
 cannot be cancelled — `touchstart` in the edge strip is not reliably cancelable and
-`preventDefault` does not stop the navigation. There is no way to win that
-gesture, so the only option is to decline it: a swipe is ignored unless it *starts*
-more than `SWIPE_EDGE_PX` (44) from either side. That is wider than the ~20px
-Safari actually claims, and equal to Apple's minimum touch target. On a viewport
-too narrow to hold two strips and a usable middle, swiping is disabled entirely
-rather than the strips being shrunk.
+`preventDefault` does not stop the navigation. There is no way to win it, so the
+app declines it: a gesture is ignored unless it *starts* more than
+`SWIPE_EDGE_PX` (44) from either side, wider than the ~20px Safari claims and equal
+to Apple's minimum touch target. On a viewport too narrow to hold two strips and a
+usable middle, swiping disables itself rather than shrinking them.
 
 **Coexisting with vertical scrolling.** The axis is decided once, from the first
-10px of travel, and then honoured for the rest of the gesture. Re-deciding on
-every move is how swipe handlers end up stealing the end of a flick. An exact
-diagonal goes to the scroller, because scrolling is the more common intent.
-Listeners are therefore all **passive** — nothing here ever needs
-`preventDefault`, since a horizontal drag has nothing to scroll and a vertical one
-is handed straight back.
+10px, then honoured for the rest of the gesture; re-deciding on every move is how
+swipe handlers steal the end of a flick. An exact diagonal goes to the scroller.
+If the gesture turns out to be vertical after the pane has already moved, the pane
+is handed back with a transition. Listeners are all **passive** — nothing needs
+`preventDefault`, since a horizontal drag has nothing to scroll.
 
-A swipe commits only if it travelled 56px, was at least 1.6× more horizontal than
-vertical, and took under 900ms. Text fields and anything marked `data-noswipe` keep
-their own horizontal drags, because in a textarea that is a caret selection.
-Multi-touch is ignored so pinch-zoom cannot turn the page, and `touch-action` is
-`pan-y pinch-zoom` rather than `pan-y` so the gesture does not cost anyone the
-ability to zoom.
+Text fields and anything marked `data-noswipe` keep their own horizontal drags
+(in a textarea that is a caret selection). Multi-touch is ignored so pinch cannot
+turn the page, and `touch-action` is `pan-y pinch-zoom` rather than `pan-y` so the
+gesture does not cost anyone text zoom.
 
-Two pieces of feedback, both short: the arriving day slides in from the direction
-of travel, and a refused forward swipe on today gets a small rubber-band — without
-it, hitting the boundary is indistinguishable from the app failing to notice.
-Both are disabled under `prefers-reduced-motion`.
+### Why ui/swipe.ts writes to the DOM directly
 
-**No finger-following drag**, deliberately. It would feel better and it is a lot
-more moving parts — transform tracking, snap-back, interrupted gestures — none of
-which could be felt on a real device from where this was written.
-Threshold-and-commit is the version that cannot jank. Say the word if it feels
-dead in the hand.
+The drag offset is **not** React state. Tänään renders a whole day — hero ring,
+every exercise, every symptom, the PSFS card — and re-rendering that subtree on
+every `touchmove` would drop frames on a phone. The offset goes straight to the
+pane's `style.transform` through a ref, and the pill's label through another.
+React owns *which* day is shown; `ui/swipe.ts` owns where the pane sits while a
+finger is on it. They cannot fight, because the transform is always reset before
+React is told anything.
 
-The geometry is pure in `domain/swipe.ts` and tested there; `ui/swipe.ts` is the
-touch plumbing, and `tests/dayswipe.test.tsx` drives real touch events through the
-mounted app for each rule above.
+The pane therefore must not be keyed — `data-day-pane` marks it, and is also the
+hook the tests assert on, since the DOM is where the drag actually lives.
+
+On commit the pane continues the way the finger went and fades out, the day is
+swapped while it is invisible, and it arrives from the opposite side. The
+crossfade is what hides the jump: only one day is rendered, so there is no
+neighbour to slide across, and fading at the swap point means there is nothing to
+see at the moment the content changes. Rendering the adjacent days properly would
+be a real carousel — three heavy subtrees and three sets of live mutations — which
+is not worth it for a gesture this short.
+
+`prefers-reduced-motion` commits instantly with no animation. The drag itself is
+kept: it is direct manipulation rather than decoration, and removing it would take
+away the only in-gesture feedback there is.
+
+The geometry is pure in `domain/swipe.ts`; `tests/dayswipe.test.tsx` drives real
+touch events through the mounted app and reads the transform and the pill off the
+DOM, including the edge refusal, the boundary leash and the textarea case.
 
 ## Palautus
 

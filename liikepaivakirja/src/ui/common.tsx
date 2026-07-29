@@ -110,15 +110,6 @@ export function Style() {
         .ptf textarea::placeholder, .ptf input::placeholder { color: ${C.inkFaint}; }
         @keyframes ptf-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
         .ptf .rise { animation: ptf-rise .35s ease both; }
-        /* Day-swipe feedback. Short and small on purpose: this is a page turn,
-           not a transition, and anything longer gets in the way of a second
-           swipe. The reduced-motion rule below disables all three. */
-        @keyframes ptf-day-next { from { opacity: .35; transform: translate3d(16px,0,0); } to { opacity: 1; transform: none; } }
-        @keyframes ptf-day-prev { from { opacity: .35; transform: translate3d(-16px,0,0); } to { opacity: 1; transform: none; } }
-        @keyframes ptf-day-bump { 0%, 100% { transform: none; } 45% { transform: translate3d(-9px,0,0); } }
-        .ptf .day-in-next { animation: ptf-day-next .2s ease-out both; }
-        .ptf .day-in-prev { animation: ptf-day-prev .2s ease-out both; }
-        .ptf .day-bump { animation: ptf-day-bump .24s ease-out both; }
         @media (prefers-reduced-motion: reduce) {
           .ptf *, .ptf .rise { animation: none !important; transition: none !important; }
         }
