@@ -2,12 +2,25 @@
    with entries from other suites makes that harder to assert on. */
 // @vitest-environment jsdom
 import "fake-indexeddb/auto";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, waitFor, fireEvent, within } from "@testing-library/react";
 import App from "../src/ui/App";
 import { SWIPE_BLOCKED_DRAG_PX, SWIPE_EDGE_PX, SWIPE_MIN_PX } from "../src/domain";
 
 const MID = 500; /* jsdom's window.innerWidth is 1024, so this is the middle */
+
+/* A swipe is rejected if it took longer than SWIPE_MAX_MS. These gestures are
+   synchronous, so in practice they take a millisecond — but "in practice" is how
+   a suite acquires a flake that only ever fails on a loaded CI runner, and a
+   failed test here fails the deploy. Freezing the clock removes the whole class:
+   elapsed is always zero, which is what the test actually means. */
+beforeEach(() => {
+  const frozen = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => frozen);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const swipe = (el: Element, from: number, to: number, y = 300, yTo = 300) => {
   fireEvent.touchStart(el, { touches: [{ clientX: from, clientY: y }] });

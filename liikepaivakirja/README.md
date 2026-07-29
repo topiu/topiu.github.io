@@ -467,20 +467,64 @@ second restore consuming the undo slot.
 
 ## Deploying to GitHub Pages
 
-1. Push this project to a repo. `.github/workflows/deploy.yml` builds and
-   deploys on every push to `main`.
-2. Repo → Settings → Pages → **Source: GitHub Actions**.
-3. The default base path is `/liikepaivakirja/`, i.e. a project site at
-   `https://<user>.github.io/liikepaivakirja/`. This is deliberate — it leaves
-   whatever else lives at the root of a `<user>.github.io` repo untouched.
-   To serve from the root instead, set a repository variable `BASE_PATH` to `/`
-   (Settings → Secrets and variables → Actions → Variables), or build locally
-   with `BASE_PATH=/ npm run build`.
+`.github/workflows/deploy.yml` at the repository root builds every immediate
+subfolder containing a `package.json`, with `BASE_PATH=/<folder>/`, and publishes
+`_site/` — the landing page at the root and each app at its own subpath. Adding an
+app means adding a folder.
 
-**Pick the URL before you start logging data.** IndexedDB is per-origin *and*
-per-path-independent, so moving from `/liikepaivakirja/` to `/` keeps your data
-(same origin) but moving to a custom domain does not — you'd migrate by
-export/import.
+### The blank-page failure, and what it actually was
+
+Twice the site came back showing GitHub's default page at the root and, at
+`/liikepaivakirja/`, the app's own "ei latautunut" fallback. That combination is
+diagnostic: it is Pages serving the **repository branch** rather than the Actions
+artifact.
+
+- Root: Jekyll renders `README.md`, which is one line, so it looks like a default
+  page.
+- The app: the *source* `index.html` is served, and its script tag points at
+  `/src/main.tsx`, which only exists after a build. It 404s, nothing mounts, and
+  the fallback is all that is left.
+- `?sw=off` does nothing, correctly — no JavaScript ever ran, so no service worker
+  was ever involved. The first time this happened it was blamed on the worker
+  anyway, and a whole round was spent withdrawing a feature that was innocent.
+
+Three defects in this workflow could produce it, all now fixed:
+
+1. **`cancel-in-progress: true`** on the `pages` concurrency group. Cancelling a
+   run that has already entered `actions/deploy-pages` can leave the deployment
+   unfinished, and a site with no completed deployment serves the default page.
+   GitHub's own Pages template says not to do this; it is now `false`. The overlap
+   was easy to cause: uploading a zip through the web UI is a real push and starts
+   a deploy, and dispatching Deploy manually a minute later cancelled it.
+2. **`configure-pages` ran after the build.** That step is what tells Pages to
+   serve the artifact instead of the branch, so a build that failed never reached
+   it. It now runs first, and a failed build leaves the previous good deployment
+   in place.
+3. **Nothing checked the artifact.** A publish that could not possibly work was
+   indistinguishable from a good one until a human opened the page.
+
+### The verification step
+
+Before uploading, every local `src`/`href` in each app's `index.html` must exist
+in the artifact, and no page may still reference `/src/`. It is tested against
+three cases: a real build passes; a raw-source publish fails on both counts; a
+build with its JS bundle deleted fails on the missing asset.
+
+This is the step that turns the failure above into a red run instead of a silent
+bad deployment. Failing here is the point — the artifact is never uploaded, so the
+last good deployment stays live.
+
+### If it happens again
+
+Check, in this order: **Settings → Pages → Source** should say GitHub Actions;
+the latest Deploy run should be green, not cancelled; and BUILD_ID under Muokkaa →
+Offline ja versio should match the deploy you just ran. If BUILD_ID is stale, the
+app is not at fault and nothing in it needs changing.
+
+Two habits worth keeping: upload the zip, run **Apply zip**, and only then run
+**Deploy** — waiting for the upload's own deploy run to finish first. And a commit
+pushed with the default `GITHUB_TOKEN` does not trigger workflows, which is why
+Apply zip cannot start the deploy itself.
 
 ## Migrating your data off the artifact
 
