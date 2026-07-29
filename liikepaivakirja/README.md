@@ -55,6 +55,10 @@ src/
                sw.ts        service worker registration, opt-out, BUILD_ID
   ui/          App Today History Edit Modals Library BodyMap common
                Help Psfs Report Restore Update  swipe.ts (hook)
+
+CLAUDE.md at the app root carries the working rules for changing this code —
+invariants, the zip delivery loop, and the mistakes already made here. Read it
+before the rest of this file if you are about to edit something.
   styles/      tokens.ts   the palette C and FONT
 tests/         domain.test.ts  smoke.test.tsx
 tools/         slice.py  postslice.py
