@@ -55,14 +55,15 @@ src/
                sw.ts        service worker registration, opt-out, BUILD_ID
   ui/          App Today History Edit Modals Library BodyMap common
                Help Psfs Report Restore Update  swipe.ts (hook)
+               ErrorBoundary.tsx  one per tab, see "When a view throws"
+  styles/      tokens.ts   the palette C and FONT
+tests/         domain.test.ts  smoke.test.tsx  historyrange.test.tsx
+tools/         slice.py  postslice.py
+```
 
 CLAUDE.md at the app root carries the working rules for changing this code —
 invariants, the zip delivery loop, and the mistakes already made here. Read it
 before the rest of this file if you are about to edit something.
-  styles/      tokens.ts   the palette C and FONT
-tests/         domain.test.ts  smoke.test.tsx
-tools/         slice.py  postslice.py
-```
 
 ## Storage
 
@@ -487,6 +488,45 @@ than two that must agree, and a restore is undoable via `physio-undo`.
 `forceSnapshot()` runs first, so the state you restored *away* from survives a
 second restore consuming the undo slot.
 
+## When a view throws
+
+A throw during render unmounts the whole React tree, not the component that
+threw. On a phone that means a white page, and on a Home Screen install there
+are no developer tools, so the remedy a user reaches for is clearing website
+data — which destroys the diary, because the diary *is* IndexedDB on one device.
+The cost of any single render bug was therefore total.
+
+It was paid for real. A `const` arrow in `TrendChart` was read one line above its
+own declaration, which throws `ReferenceError` from the temporal dead zone, and
+that blanked the app for every Historia range except the 14 pv default. The
+14 pv branch renders the diary and the heatmap instead of the chart, so nothing
+that only exercises the default range could see it — and nothing did, because the
+long-range view had no test at all.
+
+`ui/ErrorBoundary.tsx` is the answer to the blast radius, not to the bug:
+
+- **One boundary per tab**, mounted inside the shell, so the header and the tab
+  bar always survive and Tänään stays usable while a chart is broken. Logging the
+  day matters more than the chart does.
+- **A boundary unmounts with its tab**, which is what lets a tab switch clear the
+  error without any reset plumbing. "Yritä uudelleen" remounts the children,
+  which drops view-local state — for Historia that returns the range to 14 pv,
+  i.e. away from the selection that broke. That is a recovery, not a cure, and
+  the wording says so.
+- **Backup and the offline switch get their own boundary**, separate from the
+  list editor above them. They are the escape hatches; they have to be reachable
+  when the editor is the thing that failed.
+- **The fallback shows BUILD_ID and the error text, and offers to copy them.**
+  Not decoration: on a phone that is the only bug report available, and BUILD_ID
+  comes first for the same reason CLAUDE.md says to check the deploy before
+  suspecting the app.
+
+The boundary is a floor, not a licence. Order the body of a chart component
+geometry → scales → point lists, and the class of bug that caused this cannot
+occur; `tests/historyrange.test.tsx` fails if that ordering regresses, and it
+mounts the app and taps 30 pv rather than only unit-testing the chart, because
+the branch was the part that was untested.
+
 ## Deploying to GitHub Pages
 
 `.github/workflows/deploy.yml` at the repository root builds every immediate
@@ -622,6 +662,9 @@ where the file went.
   before the event stops being evidence, and the physiotherapist cannot tell an
   intention from a record. If it is ever added, planned and actual have to be
   visibly separate layers and planned must never count toward adherence.
+- **Error reporting.** The error boundary shows the message and copies it on
+  request; it sends nothing anywhere. There is no server and no account, and
+  standing one up for diagnostics would put diary contents on a wire.
 - **Charts in the report.** The PSFS grid is a table on purpose — it prints
   cleanly in black and white and survives being photocopied.
 - Any of the other big-screen analytics discussed separately.

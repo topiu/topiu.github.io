@@ -87,6 +87,7 @@ src/storage/   store.ts (IndexedDB + async bridge), backup.ts (snapshots),
 src/platform/  download.ts share.ts sw.ts        (browser capability wrappers)
 src/ui/        App Today History Edit Modals Library BodyMap common
                Backup Help Psfs Report Restore Update  swipe.ts (hook)
+               ErrorBoundary (one per tab, mounted inside the shell)
 tests/         mirrors domain/ plus mount tests
 ```
 
@@ -140,6 +141,18 @@ space; controls that do nothing are hidden, not greyed out.
 ---
 
 ## Traps already hit here
+
+**A `const` arrow read above its own declaration throws, and a render throw took
+the whole app down.** `TrendChart` built its steps polyline one line above the
+`xC` x-scale it calls; `const` hoists into the temporal dead zone, so this is a
+`ReferenceError` at render time, not a lint nit. It blanked the app for every
+Historia range except the 14 pv default — because 14 pv renders a different
+branch entirely, and the long-range branch had no test. Two rules came out of it:
+order a chart body **geometry → scales → point lists**, and when a view is only
+reachable through a control, the test has to press the control. There is now an
+`ErrorBoundary` per tab (`ui/ErrorBoundary.tsx`), so the same class of bug costs
+one view instead of the whole screen — treat that as a floor, not a licence, and
+never as a reason to leave a throwing path untested.
 
 **React state updaters run during render, not during the event.** Counting inside
 `setLogs(prev => …)` and reading the count afterwards gives zero. Decide

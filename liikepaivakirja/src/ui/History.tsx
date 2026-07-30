@@ -594,14 +594,23 @@ export function TrendChart({ weekly }) {
   const ih = H - padT - padB;
   const n = weekly.length;
   const step = iw / n;
+  /* Every scale and every point list below reads these. They are declared first
+     on purpose: `const` is hoisted into the temporal dead zone, so a point list
+     built above its own x-scale throws ReferenceError during render — which
+     unmounts the whole app, not just the chart. That shipped once, when the
+     steps polyline was inserted above `xC`. Keep this order: geometry, then
+     scales, then point lists. */
+  const xC = (i) => padL + step * (i + 0.5);
   const maxLoad = Math.max(4, ...weekly.map((w) => w.load));
   const maxSteps = Math.max(0, ...weekly.map((w) => w.steps));
   const hasSteps = maxSteps > 0;
-  const ySteps = (v) => padT + ih - (v / maxSteps) * ih;
-  const stepPts = weekly.map((w, i) => `${xC(i).toFixed(1)},${ySteps(w.steps).toFixed(1)}`).join(" ");
-  const xC = (i) => padL + step * (i + 0.5);
   const yLoad = (v) => padT + ih - (v / maxLoad) * ih;
   const yTrain = (v) => (v / 7) * ih;
+  /* maxSteps is 0 until steps are imported; dividing by it put NaN into the
+     points attribute. Harmless while `hasSteps` gates the polyline, but an
+     invalid SVG attribute should not depend on a guard somewhere else. */
+  const ySteps = (v) => (hasSteps ? padT + ih - (v / maxSteps) * ih : padT + ih);
+  const stepPts = weekly.map((w, i) => `${xC(i).toFixed(1)},${ySteps(w.steps).toFixed(1)}`).join(" ");
   const linePts = weekly.map((w, i) => `${xC(i).toFixed(1)},${yLoad(w.load).toFixed(1)}`).join(" ");
   const barW = Math.min(18, step * 0.55);
   // label at most ~6 x-ticks

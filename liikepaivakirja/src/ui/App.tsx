@@ -5,6 +5,7 @@ import { deleteKey, hasStore, loadJSON, saveJSON, saveJSONDebounced, saveJSONNow
 import { C, FONT } from "../styles/tokens";
 import { BackupBanner, BackupSettings } from "./Backup";
 import { EditView } from "./Edit";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { HistoryView } from "./History";
 import { ExportModal, ImportModal, StepsModal } from "./Modals";
 import { ReportModal } from "./Report";
@@ -662,19 +663,23 @@ export default function App() {
           ))}
         </div>
 
-        {tab === "today" && <UpdateBanner />}
-        {tab === "today" && isFresh && !helpDismissed && (
-          <FirstRunCard
-            onOpenHelp={() => setHelpOpen(true)}
-            onGoEdit={() => setTab("edit")}
-            onDismiss={dismissHelp}
-          />
-        )}
+        {/* One boundary per tab. A throw during render unmounts the whole tree,
+            so without these a bug in any single view is a white screen with no
+            way back — see ui/ErrorBoundary.tsx. The boundary sits inside the
+            shell so the header and the tab bar always survive, and it unmounts
+            with its tab, which is what lets a tab switch clear the error. */}
         {tab === "today" && (
+          <ErrorBoundary label="Tänään">
+          <UpdateBanner />
+          {isFresh && !helpDismissed && (
+            <FirstRunCard
+              onOpenHelp={() => setHelpOpen(true)}
+              onGoEdit={() => setTab("edit")}
+              onDismiss={dismissHelp}
+            />
+          )}
           <BackupBanner exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} questions={questions} />
-        )}
 
-        {tab === "today" && (
           <div ref={swipe.outerRef} {...swipe.handlers} style={swipe.outerStyle}>
           {/* Names the day a release would land on, while there is still time to
               slide back. Positioned over the pane rather than inside it so the
@@ -729,9 +734,11 @@ export default function App() {
           </div>
           </div>
           </div>
+          </ErrorBoundary>
         )}
 
         {tab === "history" && (
+          <ErrorBoundary label="Historia">
           <HistoryView
             days14={days14}
             logs={logs}
@@ -750,9 +757,11 @@ export default function App() {
             onImportSteps={() => setStepsOpen(true)}
             onReport={() => setReportOpen(true)}
           />
+          </ErrorBoundary>
         )}
 
         {tab === "edit" && (
+          <ErrorBoundary label="Muokkaa">
           <EditView
             exercises={exercises}
             symptoms={symptoms}
@@ -773,9 +782,15 @@ export default function App() {
             logDoseChange={logDoseChange}
             setFreq={setFreq}
           />
+          </ErrorBoundary>
         )}
 
+        {/* Deliberately its own boundary rather than sharing the one above:
+            these two *are* the escape hatches — a backup and the offline
+            switch — and they have to stay reachable when the thing that broke
+            is the list editor. */}
         {tab === "edit" && (
+          <ErrorBoundary label="Varmuuskopiot">
           <BackupSettings
             exercises={exercises}
             symptoms={symptoms}
@@ -787,8 +802,9 @@ export default function App() {
             onUndo={undoImport}
             canUndo={canUndoImport}
           />
+          <OfflineSettings />
+          </ErrorBoundary>
         )}
-        {tab === "edit" && <OfflineSettings />}
 
         {hasStore && (
           <p style={{ marginTop: 26, textAlign: "center", fontSize: 12, color: C.inkFaint }}>
