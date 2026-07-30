@@ -402,10 +402,27 @@ usable middle, swiping disables itself rather than shrinking them.
 
 **Coexisting with vertical scrolling.** The axis is decided once, from the first
 10px, then honoured for the rest of the gesture; re-deciding on every move is how
-swipe handlers steal the end of a flick. An exact diagonal goes to the scroller.
-If the gesture turns out to be vertical after the pane has already moved, the pane
-is handed back with a transition. Listeners are all **passive** — nothing needs
-`preventDefault`, since a horizontal drag has nothing to scroll.
+swipe handlers steal the end of a flick. If the gesture turns out to be vertical
+after the pane has already moved, the pane is handed back with a transition.
+
+Horizontal must **dominate** by `SWIPE_AXIS_RATIO` (1.2), not merely exceed:
+claiming a gesture now means cancelling a scroll, and a near-diagonal drag is far
+likelier to be a scroll that drifted than a page turn.
+
+`touchmove` is **non-passive** and calls `preventDefault()` once the axis has
+locked horizontal. An earlier version had every listener passive, documented as a
+virtue, and that was the bug: a passive listener cannot cancel scrolling, so a
+drag with any vertical component slid the pane sideways *while the page scrolled
+underneath*, and the vertical velocity it had accumulated kept coasting after
+release. `touch-action: pan-y` declines horizontal panning but says nothing about
+the vertical component of a diagonal drag, and changing `touch-action` mid-gesture
+does nothing because the browser latches it at touchstart.
+
+`preventDefault` is only ever called *after* the lock, so a vertical gesture is
+never blocked and never waits on the handler. The listener is attached by hand,
+because React registers `touchmove` passively at the root and `preventDefault()`
+inside `onTouchMove` is silently a no-op — `touchstart`, `touchend` and
+`touchcancel` stay as ordinary React props, since none of them needs cancelling.
 
 Text fields and anything marked `data-noswipe` keep their own horizontal drags
 (in a textarea that is a caret selection). Multi-touch is ignored so pinch cannot
@@ -425,13 +442,14 @@ React is told anything.
 The pane therefore must not be keyed — `data-day-pane` marks it, and is also the
 hook the tests assert on, since the DOM is where the drag actually lives.
 
-On commit the pane continues the way the finger went and fades out, the day is
-swapped while it is invisible, and it arrives from the opposite side. The
-crossfade is what hides the jump: only one day is rendered, so there is no
-neighbour to slide across, and fading at the swap point means there is nothing to
-see at the moment the content changes. Rendering the adjacent days properly would
-be a real carousel — three heavy subtrees and three sets of live mutations — which
-is not worth it for a gesture this short.
+On commit the day is swapped **immediately** and the new one arrives from the side
+it conceptually came from, starting faded and 28px off-centre. No pending timer
+means a second swipe during the animation cannot lose the first one's day change —
+which matters, since comparing two days back to back is the reason the gesture
+exists. The opacity dip covers the small jump from wherever the finger was:
+only one day is rendered, so there is no neighbour to slide across. Rendering the
+adjacent days properly would be a real carousel — three heavy subtrees and three
+sets of live mutations — which is not worth it for a gesture this short.
 
 `prefers-reduced-motion` commits instantly with no animation. The drag itself is
 kept: it is direct manipulation rather than decoration, and removing it would take
@@ -543,15 +561,21 @@ Apply zip cannot start the deploy itself.
 
 ## Type checking
 
-`npm run typecheck` currently reports ~57 errors, all in `src/ui/`, all of the
-"TypeScript inferred a narrower prop shape than the untyped JSX actually uses"
-family. They are **type-only** — Vite/esbuild strips types without checking, so
-the build and runtime are unaffected, and CI does not gate on them.
+`npm run typecheck` currently reports ~75 errors, mostly in `src/ui/` and mostly
+of the "TypeScript inferred a narrower prop shape than the untyped JSX actually
+uses" family — `MiniBtn` inferring `danger` as required, and so on. A handful sit
+in `domain/report.ts`, `platform/sw.ts` and `tests/domain.test.ts` and are
+`unknown`-arithmetic or narrowing complaints.
 
-`domain/`, `storage/` and `platform/` are clean. That asymmetry is intentional:
-turning `strict` on now would mean editing thousands of lines we just proved were
-moved verbatim. Tighten the UI module by module afterwards, with the tests as a
-net.
+They are **type-only** — Vite/esbuild strips types without checking, so the build
+and runtime are unaffected, and the deploy does not gate on them: the workflow
+runs `npm test` and `npm run build` only.
+
+Turning `strict` on would mean editing thousands of lines that were moved verbatim
+from the artifact. Tighten module by module instead, with the tests as a net. Until
+then the useful discipline is to compare the error count against a pristine clone
+before and after a change, so it does not grow — and not to read a red typecheck
+as something you just broke.
 
 ## Daily file backup
 

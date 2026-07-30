@@ -675,7 +675,7 @@ export default function App() {
         )}
 
         {tab === "today" && (
-          <div {...swipe.handlers} style={swipe.outerStyle}>
+          <div ref={swipe.outerRef} {...swipe.handlers} style={swipe.outerStyle}>
           {/* Names the day a release would land on, while there is still time to
               slide back. Positioned over the pane rather than inside it so the
               drag transform does not carry it along. Updated through a ref, never

@@ -13,9 +13,19 @@
  * every move is how swipe handlers end up stealing scrolls near the end of a
  * flick, or paging when someone meant to scroll diagonally.
  *
- * Listeners can therefore stay passive: nothing here ever needs preventDefault,
- * because a horizontal drag has nothing to scroll and a vertical one is handed
- * straight back to the scroller.
+ * The axis lock is also what makes it safe to cancel scrolling. `touch-action:
+ * pan-y` tells the browser horizontal panning is not its business, but a
+ * *diagonal* drag still has a vertical component the browser will happily scroll
+ * with — so the pane slid sideways while the page scrolled underneath, and the
+ * leftover vertical velocity kept coasting after release. Once the axis has
+ * locked horizontal, ui/swipe.ts calls preventDefault on every touchmove, which
+ * needs a non-passive listener. It is only ever called after the lock, so a
+ * vertical gesture is never blocked or delayed.
+ *
+ * SWIPE_AXIS_RATIO exists for the same reason: horizontal has to *dominate*, not
+ * merely exceed, before the lock. A near-diagonal drag is far more likely to be a
+ * scroll that drifted than a page turn, and misreading it means cancelling a
+ * scroll the user wanted.
  */
 
 /* Wider than the ~20px Safari actually claims, and equal to Apple's minimum
@@ -35,6 +45,10 @@ export const SWIPE_MAX_MS = 900;
 /* Travel before the axis is decided. Small enough to lock in before the browser
    commits to scrolling, large enough not to trip on jitter. */
 export const SWIPE_AXIS_PX = 10;
+
+/* How much horizontal has to beat vertical to claim the gesture. Above 1 on
+   purpose: ties and near-ties belong to the scroller. */
+export const SWIPE_AXIS_RATIO = 1.2;
 
 /* How far the pane may travel. Well short of the viewport: this is not a
    carousel revealing the neighbouring day, it is the current day yielding, and
@@ -61,7 +75,7 @@ export function swipeAxisOf(dx: number, dy: number, min: number = SWIPE_AXIS_PX)
   const ax = Math.abs(dx);
   const ay = Math.abs(dy);
   if (ax < min && ay < min) return "undecided";
-  return ax > ay ? "horizontal" : "vertical";
+  return ax > ay * SWIPE_AXIS_RATIO ? "horizontal" : "vertical";
 }
 
 /* Positive dx is a rightward finger movement, which goes back a day — the same

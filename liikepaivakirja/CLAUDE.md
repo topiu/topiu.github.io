@@ -56,7 +56,7 @@ editing instead.
 ```
 npm ci                                   # match the lockfile, as CI does
 npm test                                 # vitest, ~170 tests
-npm run typecheck                        # tsc --noEmit
+npm run typecheck                        # tsc --noEmit — see caveat below
 BASE_PATH=/liikepaivakirja/ npm run build   # what the deploy runs
 npm run build:single                     # one self-contained .html, no worker
 npm run dev
@@ -64,6 +64,14 @@ npm run dev
 
 Both build targets must pass before shipping. `build:single` is a real target, not
 a curiosity, and the service worker is deliberately absent from it.
+
+**`npm run typecheck` does not currently pass** — around 75 pre-existing errors,
+almost all of them tsc inferring required props from the first usage of a
+component whose props are untyped (`MiniBtn` needing `danger`, and so on), plus a
+few `unknown` arithmetic complaints. It is **not** in the deploy path; the workflow
+runs `npm test` and `npm run build` only. So: do not treat a red typecheck as
+something you broke, and do not claim it clean. Compare the error count against a
+pristine clone before and after a change, and keep it from growing.
 
 ---
 
@@ -137,6 +145,19 @@ space; controls that do nothing are hidden, not greyed out.
 `setLogs(prev => …)` and reading the count afterwards gives zero. Decide
 everything synchronously against committed state, then apply. This shipped as a
 bug in the one-tap programme button; a mount test caught it.
+
+**React registers `touchmove` passively.** `preventDefault()` inside an
+`onTouchMove` prop is silently a no-op, so anything that must cancel scrolling has
+to attach its own listener with `{ passive: false }`. This shipped as a bug: the
+swipe pane slid sideways while the page scrolled underneath it, and the leftover
+vertical velocity kept coasting after release. `preventDefault` only after an axis
+lock, never before, or vertical scrolling gets blocked.
+
+**A `useEffect` over a plain ref does not see a late-mounting node.** Tänään is
+not rendered until IndexedDB answers, so an effect attaching a listener ran
+against a null ref and never re-ran — the gesture was dead in production, not just
+in tests. Use a **callback ref** for anything that attaches to a DOM node, and
+read changing handlers through a ref so the listener need not detach.
 
 **Do not put per-frame values in React state.** The swipe drag offset is written
 straight to `style.transform` through a ref, because re-rendering the whole Tänään

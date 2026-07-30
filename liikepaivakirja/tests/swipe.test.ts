@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  SWIPE_AXIS_RATIO,
   SWIPE_BLOCKED_DRAG_PX,
   SWIPE_EDGE_PX,
   SWIPE_MAX_DRAG_PX,
@@ -57,6 +58,16 @@ describe("swipeAxisOf", () => {
   it("gives an exact diagonal to the scroller", () => {
     /* scrolling is the more common intent, so ties are not page turns */
     expect(swipeAxisOf(20, 20)).toBe("vertical");
+  });
+
+  it("requires horizontal to dominate, not merely to exceed", () => {
+    /* Claiming the gesture means cancelling the browser's scroll, so a
+       near-diagonal drag has to go to the scroller: it is far likelier to be a
+       scroll that drifted than a page turn. */
+    expect(swipeAxisOf(60, 55)).toBe("vertical");
+    expect(swipeAxisOf(30, 30 / SWIPE_AXIS_RATIO + 1)).toBe("vertical");
+    expect(swipeAxisOf(30, 30 / SWIPE_AXIS_RATIO - 1)).toBe("horizontal");
+    expect(SWIPE_AXIS_RATIO).toBeGreaterThan(1);
   });
 });
 
