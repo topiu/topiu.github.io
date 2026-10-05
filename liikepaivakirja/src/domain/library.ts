@@ -158,8 +158,8 @@ export const LIBRARY = [
   /* ---------------- free weights · back ---------------- */
   L("barbell_row", "Kulmasoutu", "w_back", "strength", { lat: 1, trap_lower: 2, shoulder_rear: 2, biceps: 2, lumbar: 2, forearm: 3 }, { src: "anatomy" }),
   L("one_arm_db_row", "Yhden käden käsipainosoutu", "w_back", "strength", { lat: 1, trap_lower: 2, shoulder_rear: 2, biceps: 2 }, { src: "anatomy" }),
-  L("pull_up", "Leuanveto (vastaote)", "w_back", "strength", { lat: 1, biceps: 2, trap_lower: 2, forearm: 2, abs: 3 }, { src: "anatomy", structures: ["j_shoulder"] }),
-  L("chin_up", "Leuanveto (myötäote)", "w_back", "strength", { lat: 1, biceps: 1, trap_lower: 2 }, { src: "anatomy", structures: ["j_shoulder"] }),
+  L("pull_up", "Leuanveto (myötäote)", "w_back", "strength", { lat: 1, biceps: 2, trap_lower: 2, forearm: 2, abs: 3 }, { src: "anatomy", structures: ["j_shoulder"] }),
+  L("chin_up", "Leuanveto (vastaote)", "w_back", "strength", { lat: 1, biceps: 1, trap_lower: 2 }, { src: "anatomy", structures: ["j_shoulder"] }),
   L("lat_pulldown", "Ylätalja", "w_back", "strength", { lat: 1, biceps: 2, trap_lower: 2 }, { src: "anatomy" }),
   L("seated_row", "Alatalja", "w_back", "strength", { lat: 1, trap_lower: 1, shoulder_rear: 2, biceps: 2 }, { src: "anatomy" }),
   L("t_bar_row", "T-tankosoutu", "w_back", "strength", { lat: 1, trap_lower: 2, shoulder_rear: 2, biceps: 2 }, { src: "anatomy" }),

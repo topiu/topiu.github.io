@@ -61,12 +61,26 @@ export function normalizePsfs(raw) {
   if (!raw || typeof raw !== "object") return out;
 
   const seen = new Set();
+  /* ids that hold at least one score: an unnamed activity is kept only then */
+  const scored = new Set();
+  if (raw.entries && typeof raw.entries === "object") {
+    Object.values(raw.entries).forEach((e) => {
+      if (e && typeof e === "object") Object.keys(e).forEach((id) => scored.add(id));
+    });
+  }
   if (Array.isArray(raw.activities)) {
     raw.activities.forEach((a) => {
       if (!a || typeof a !== "object") return;
-      const name = typeof a.name === "string" ? a.name.trim() : "";
-      if (!name) return;
+      /* An empty name on an activity with scores gets a placeholder rather
+         than being dropped: renaming is typed, so clearing the field to retype
+         it and then leaving the app used to delete the activity and every
+         score it had. */
       const id = a.id != null ? String(a.id) : uid();
+      let name = typeof a.name === "string" ? a.name.trim() : "";
+      if (!name) {
+        if (!scored.has(id)) return;
+        name = PSFS_UNNAMED;
+      }
       if (seen.has(id)) return;
       seen.add(id);
       out.activities.push({
@@ -99,6 +113,8 @@ export function normalizePsfs(raw) {
 /* ------------------------------------------------------------------ */
 /*  Reads                                                              */
 /* ------------------------------------------------------------------ */
+export const PSFS_UNNAMED = "Nimetön toiminto";
+
 export const psfsActivities = (p) => ((p && p.activities) || []).filter((a) => !a.retired);
 
 export const psfsAllActivities = (p) => (p && p.activities) || [];
@@ -171,14 +187,39 @@ export function psfsBandLabel(band, delta) {
   return `pieni ${dir}`;
 }
 
-/* first vs latest assessment; null until there are two */
+/* First vs latest assessment; null until there are two that share at least
+   one activity.
+
+   Compared over the activities scored on BOTH occasions only. Comparing the
+   two overall means let a retired activity and a new one move the mean — and
+   the band — when no score had changed at all. The delta and band also come
+   from the unrounded means: rounding each mean first could push a delta of
+   2.67 to 2.7 and across a published threshold. `from`/`to` are the compared
+   means for display; `sameSet` is false when some activities were left out. */
 export function psfsChange(p) {
   const s = psfsSeries(p);
   if (s.length < 2) return null;
   const first = s[0];
   const last = s[s.length - 1];
-  const delta = Math.round((last.mean - first.mean) * 10) / 10;
-  return { first, last, delta, band: psfsBand(delta), n: s.length };
+  const ids = Object.keys(first.scores).filter(
+    (id) => typeof first.scores[id] === "number" && typeof last.scores[id] === "number"
+  );
+  if (!ids.length) return null;
+  const sumA = ids.reduce((acc, id) => acc + first.scores[id], 0);
+  const sumB = ids.reduce((acc, id) => acc + last.scores[id], 0);
+  const raw = (sumB - sumA) / ids.length;
+  const r1 = (v) => Math.round(v * 10) / 10;
+  return {
+    first,
+    last,
+    from: r1(sumA / ids.length),
+    to: r1(sumB / ids.length),
+    delta: r1(raw),
+    band: psfsBand(raw),
+    common: ids.length,
+    sameSet: ids.length === first.n && ids.length === last.n,
+    n: s.length,
+  };
 }
 
 /* per-activity first vs latest, reported raw — a single activity needs about

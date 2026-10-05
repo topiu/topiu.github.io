@@ -207,6 +207,7 @@ export function PsfsCard({
           <div style={{ fontSize: 12.5, color: C.inkSoft, marginTop: 6, lineHeight: 1.5 }}>
             Ensimmäisestä arviosta {change.delta > 0 ? "+" : ""}
             {change.delta} pistettä — {psfsBandLabel(change.band, change.delta)}.
+            {!change.sameSet && ` Vertailussa ${change.common} toimintoa, jotka on arvioitu molemmilla kerroilla.`}
           </div>
         )}
       </Card>

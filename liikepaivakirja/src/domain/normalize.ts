@@ -25,6 +25,9 @@ export function normalizeExercises(arr) {
     met: e && Number(e.met) > 0 ? Number(e.met) : null,
     source: e && e.source && SOURCES[e.source.src] ? { src: e.source.src, note: typeof e.source.note === "string" ? e.source.note.slice(0, 200) : "", edited: !!e.source.edited } : null,
     archived: !!(e && e.archived),
+    /* day the exercise was added, so the report does not count the days before
+       it as missed; absent on exercises created before it was recorded */
+    added: e && typeof e.added === "string" && DATE_RE.test(e.added) ? e.added : null,
     /* absent on every exercise created before frequencies existed; daily is
        what those exercises effectively were */
     freq: freqOf(e),
@@ -108,16 +111,30 @@ export function normalizeLogs(raw, exById) {
     if (!l || typeof l !== "object") return;
     const sets = {};
     const goal = {};
-    if (l.sets && typeof l.sets === "object") {
-      Object.keys(l.sets).forEach((id) => {
-        const n = parseInt(l.sets[id], 10);
-        if (n > 0) sets[id] = n;
+    const mins = {};
+    if (l.mins && typeof l.mins === "object") {
+      Object.keys(l.mins).forEach((id) => {
+        const v = parseInt(l.mins[id], 10);
+        if (v > 0) mins[id] = Math.min(v, 1440);
       });
+    }
+    if ((l.sets && typeof l.sets === "object") || !Array.isArray(l.done)) {
+      if (l.sets && typeof l.sets === "object") {
+        Object.keys(l.sets).forEach((id) => {
+          const n = parseInt(l.sets[id], 10);
+          if (n > 0) sets[id] = n;
+        });
+      }
+      /* A snapshot belongs to every exercise logged that day, in sets *or* in
+         minutes. Keying this on `sets` alone dropped the snapshot of every
+         minute exercise on each load, so raising a walk from 30 to 45 min made
+         every past 30-min day read as incomplete. */
+      const logged = [...new Set([...Object.keys(sets), ...Object.keys(mins)])];
       if (l.goal && typeof l.goal === "object") {
-        Object.keys(l.goal).forEach((id) => {
-          if (!sets[id]) return;
+        logged.forEach((id) => {
           const g = l.goal[id];
-          if (typeof g === "object" && g !== null) {
+          if (g == null) return;
+          if (typeof g === "object") {
             const s = toNum(g.sets) || 1;
             goal[id] = { sets: s, reps: toNum(g.reps), hold: toNum(g.hold), min: toNum(g.min), freq: toNum(g.freq) || FREQ_DAILY };
           } else {
@@ -128,21 +145,23 @@ export function normalizeLogs(raw, exById) {
       }
       /* backfill: days logged before snapshots existed get frozen at the
          dose in force right now, so later dose changes can't rewrite them */
-      Object.keys(sets).forEach((id) => {
+      logged.forEach((id) => {
         if (!goal[id]) {
           goal[id] = exById[id]
             ? doseSnapshotOf(exById[id])
-            : { sets: sets[id], reps: null, hold: null, min: null, freq: FREQ_DAILY };
+            : { sets: sets[id] || 1, reps: null, hold: null, min: null, freq: FREQ_DAILY };
         }
       });
-    } else if (Array.isArray(l.done)) {
+    } else {
+      /* legacy `done: [id]` logs predate frequencies, so they were daily — said
+         explicitly, or the first load and every later one would disagree */
       l.done.forEach((id) => {
         const ex = exById[id];
         const t = ex ? targetSets(ex) : 1;
         sets[id] = t;
         goal[id] = ex
-          ? { sets: t, reps: toNum(ex.dose && ex.dose.reps), hold: toNum(ex.dose && ex.dose.hold), min: toNum(ex.dose && ex.dose.min) }
-          : { sets: t, reps: null, hold: null, min: null };
+          ? { sets: t, reps: toNum(ex.dose && ex.dose.reps), hold: toNum(ex.dose && ex.dose.hold), min: toNum(ex.dose && ex.dose.min), freq: FREQ_DAILY }
+          : { sets: t, reps: null, hold: null, min: null, freq: FREQ_DAILY };
       });
     }
     const flared = Array.isArray(l.flared) ? l.flared.map(String) : [];
@@ -154,13 +173,6 @@ export function normalizeLogs(raw, exById) {
       });
     }
     const note = typeof l.note === "string" ? l.note : "";
-    const mins = {};
-    if (l.mins && typeof l.mins === "object") {
-      Object.keys(l.mins).forEach((id) => {
-        const v = parseInt(l.mins[id], 10);
-        if (v > 0) mins[id] = Math.min(v, 1440);
-      });
-    }
     const quality = {};
     if (l.quality && typeof l.quality === "object") {
       Object.keys(l.quality).forEach((id) => {

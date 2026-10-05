@@ -1,4 +1,5 @@
 /* ui/common — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
+import { useState } from "react";
 import { Plus, RotateCcw } from "lucide-react";
 import { C } from "../styles/tokens";
 
@@ -15,9 +16,29 @@ export function AddRow({ value, setValue, placeholder, onAdd }) {
   );
 }
 
+/* Replacing a whole list is one tap away from the daily editing controls, so
+   it asks first. */
 export function ResetBtn({ onClick }) {
+  const [asking, setAsking] = useState(false);
+  if (asking) {
+    return (
+      <div style={{ margin: "8px 2px 0", fontSize: 13, color: C.inkSoft, lineHeight: 1.5 }}>
+        Korvataanko lista oletuksilla? Merkinnät säilyvät: kirjattuja kohteita ei poisteta vaan ne arkistoidaan.
+        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+          <button className="tap" onClick={() => { setAsking(false); onClick(); }}
+            style={{ padding: "8px 12px", borderRadius: 10, background: C.amber, color: "#fff", fontSize: 13, fontWeight: 600 }}>
+            Korvaa
+          </button>
+          <button className="tap" onClick={() => setAsking(false)}
+            style={{ padding: "8px 12px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.surface, color: C.inkSoft, fontSize: 13, fontWeight: 600 }}>
+            Peruuta
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
-    <button className="tap" onClick={onClick}
+    <button className="tap" onClick={() => setAsking(true)}
       style={{ display: "inline-flex", alignItems: "center", gap: 6, margin: "8px 2px 0", fontSize: 13, fontWeight: 600, color: C.inkSoft }}>
       <RotateCcw size={14} /> Palauta oletukset
     </button>

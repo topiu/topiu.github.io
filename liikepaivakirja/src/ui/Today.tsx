@@ -22,7 +22,8 @@ export function TodayView({
   setSymptomLevel,
   clearSymptom,
   setQuality,
-  setSteps,
+  onStepsChange,
+  commitSteps,
   onNoteChange,
   commitNote,
   marks,
@@ -41,9 +42,7 @@ export function TodayView({
   programUndo,
   undoProgram,
 }) {
-  const doneCount = exercises.filter((e) =>
-    isMin(e) ? (log.mins[e.id] || 0) >= goalMinOf(log, e) : (log.sets[e.id] || 0) >= goalOf(log, e)
-  ).length;
+  const doneCount = exercises.filter((e) => isCompleteOn(log, e)).length;
   const total = exercises.length;
 
   return (
@@ -194,7 +193,7 @@ export function TodayView({
 
       {/* Steps */}
       <SectionLabel>Askeleet</SectionLabel>
-      <StepsField key={`s-${log.steps || 0}`} value={log.steps || 0} onCommit={setSteps} />
+      <StepsField value={log.steps || 0} onChange={onStepsChange} onCommit={commitSteps} />
 
       {/* Note */}
       <SectionLabel>Muistiinpano</SectionLabel>
@@ -257,23 +256,29 @@ export function MarksEditor({ marks, addMark, removeMark }) {
   );
 }
 
-/* steps are typed, so writes are debounced to respect the storage rate limit */
-export function StepsField({ value, onCommit }) {
-  const t = useRef();
-  const change = (e) => {
-    const v = e.target.value;
-    clearTimeout(t.current);
-    t.current = setTimeout(() => onCommit(v), 700);
-  };
-  useEffect(() => () => clearTimeout(t.current), []);
+/* Steps are typed, so App debounces the write — and owns the pending commit,
+   so leaving the day or the tab inside the debounce window cannot drop it. The
+   input is controlled from local text and only resyncs from the stored value
+   while it is not focused: it used to be keyed on the stored value, which
+   remounted it after every save and dismissed the keyboard mid-entry. */
+export function StepsField({ value, onChange, onCommit }) {
+  const [text, setText] = useState(value ? String(value) : "");
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) setText(value ? String(value) : "");
+  }, [value]);
   return (
     <Card style={{ padding: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <input
-          defaultValue={value ? String(value) : ""}
-          onChange={change}
+          value={text}
+          onFocus={() => (focused.current = true)}
+          onChange={(e) => {
+            setText(e.target.value);
+            onChange(e.target.value);
+          }}
           onBlur={(e) => {
-            clearTimeout(t.current);
+            focused.current = false;
             onCommit(e.target.value);
           }}
           inputMode="numeric"

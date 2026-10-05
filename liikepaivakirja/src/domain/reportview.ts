@@ -181,7 +181,9 @@ function psfsSection(m) {
   const verdict = p.change
     ? `<p class="sub">Muutos ensimmäisestä arviosta ${esc(humanDate(p.change.first.date))} viimeisimpään ${esc(
         humanDate(p.change.last.date)
-      )}: ${signed(p.change.delta)} pistettä — ${esc(psfsBandLabel(p.change.band, p.change.delta))}.</p>`
+      )}: ${signed(p.change.delta)} pistettä — ${esc(psfsBandLabel(p.change.band, p.change.delta))}.${
+        p.change.sameSet ? "" : ` Vertailussa ${p.change.common} toimintoa, jotka on arvioitu molemmilla kerroilla.`
+      }</p>`
     : `<p class="sub">Vain yksi arvio tehty. Muutosta voi tulkita vasta toisesta arviosta alkaen.</p>`;
 
   return `<section><h2>Toimintakyky — PSFS</h2>
@@ -325,9 +327,11 @@ export function reportText(m, opts = {} as any) {
     });
     if (m.psfs.change) {
       L.push(
-        `  Keskiarvo ${m.psfs.change.first.mean} → ${m.psfs.change.last.mean}, ${signed(
+        `  Keskiarvo ${m.psfs.change.from} → ${m.psfs.change.to}, ${signed(
           m.psfs.change.delta
-        )} — ${psfsBandLabel(m.psfs.change.band, m.psfs.change.delta)}`
+        )} — ${psfsBandLabel(m.psfs.change.band, m.psfs.change.delta)}${
+          m.psfs.change.sameSet ? "" : ` (${m.psfs.change.common} molemmilla kerroilla arvioitua toimintoa)`
+        }`
       );
     }
   }

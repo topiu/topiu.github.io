@@ -140,10 +140,15 @@ Three things the numbers do deliberately:
    A 3×/week exercise over four weeks is scored out of 12. Before frequencies
    existed the denominator was calendar days, which meant such an exercise could
    never score above about 43 % however perfectly it was followed — a real defect,
-   not a rounding quirk. Over-delivery is reported above 100 % rather than capped.
-3. Each exercise's window starts the day it first appears in the log, not at
-   the start of the range, so an exercise added last week does not read as three
-   weeks of missed sessions. The page prints that start date.
+   not a rounding quirk. Over-delivery is reported above 100 % per exercise
+   rather than capped — but the **programme total** credits each exercise at most
+   its weekly target (`creditedSessions`). Uncapped, a 3×/week exercise done
+   daily (233 %) next to one never done totalled 117 %, hiding the skipped one.
+3. Each exercise's window starts the day it was **added** (exercises now record
+   `added`), or the day it first appears in the log if earlier — not at the start
+   of the range — so an exercise added last week does not read as three weeks of
+   missed sessions. The page prints that start date. An exercise older than the
+   `added` field that has never been logged is still counted from the range start.
 3. Nothing is interpreted. No trend arrows, no "improving", no advice. The single
    interpretive statement on the page is the PSFS band, and that threshold is
    published rather than ours.
@@ -171,6 +176,12 @@ Two design points:
   detectable change for a *single* activity is about 3 points — so single
   activities are shown as raw numbers and never labelled "parantunut". Conflating
   the two is the standard way to read improvement into noise.
+- **Like with like.** The band compares the first and latest assessments over
+  the activities scored on **both** occasions, from unrounded means. Comparing
+  two overall means let retiring one activity and adding another move the band
+  when no score had changed; rounding each mean first could push a delta across
+  a threshold. When some activities were left out, the page says how many were
+  compared.
 
 Retiring an activity keeps its scored history in the report; "poista kokonaan"
 purges it, and the UI says which is which. The JSON export is now **version 8**
@@ -484,9 +495,48 @@ swapped for another. A restore that changes nothing is reported as such — whic
 is the expected result when you are only verifying.
 
 Applying reuses App's `applyImport`, so there is one write-everything path rather
-than two that must agree, and a restore is undoable via `physio-undo`.
-`forceSnapshot()` runs first, so the state you restored *away* from survives a
-second restore consuming the undo slot.
+than two that must agree, and a restore is undoable via `physio-undo`. The same
+transaction also writes a **pre-restore snapshot** under its own key
+(`snapshot:<date>~<time>`), so the state you restored *away* from survives a
+second restore consuming the undo slot. This used to overwrite the day's single
+snapshot instead: two restores on one day left the original data nowhere, since
+the snapshot and the undo slot then both held the first restore's result.
+Pre-restore snapshots rotate separately (last 10) from the daily ones (last 14).
+
+The new data, the undo copy and the snapshot commit in **one** IndexedDB
+transaction, and the screen only changes after it commits. A failed import or
+restore therefore changes nothing, and says so; undo deletes `physio-undo` in
+the same transaction that restores from it, never before.
+
+## Storage failures
+
+`store.ts` settles every write on the transaction's `complete`, not the
+request's `success` — a commit-time abort (a full disk usually arrives that way)
+was otherwise invisible. A connection the browser closed (iOS does this to a
+backgrounded app) is forgotten and reopened instead of failing every later
+write. A fire-and-forget write that fails is retried with the same value unless
+something newer has been written since, and while any write is failing the app
+shows a banner telling the user to export before closing.
+
+The startup load is **strict**: a read that fails stops at a "Tietoja ei voitu
+lukea" screen before anything is seeded or written. It used to treat a failed
+read as an empty diary, seed the default programme over the real one, and let
+the first tap write a single day over the whole history. Unparseable contents
+are moved aside under `corrupt:<key>:<time>` rather than blocking the app.
+
+## Typed text, undo and the date
+
+- **Steps and the note** are debounced in App, not in the field: a pending
+  commit is bound to the day it was typed on and is flushed by `flushAll`. It
+  used to die with the field when the day was swiped inside the debounce window.
+- **Undo after "Merkitse ohjelma tehdyksi"** reverts only the sets and minutes
+  the fill wrote. Restoring the whole day also erased a symptom or note logged in
+  the seconds between.
+- **The selected day follows midnight.** A Home Screen app resumed in the
+  morning is the same page as last night; it now moves "today" forward on resume
+  (and once a minute while open) instead of logging into yesterday.
+- **"Palauta oletukset"** asks first, keeps the ids of defaults that already
+  exist, and archives custom items that have history rather than removing them.
 
 ## When a view throws
 
@@ -513,6 +563,11 @@ long-range view had no test at all.
   which drops view-local state — for Historia that returns the range to 14 pv,
   i.e. away from the selection that broke. That is a recovery, not a cure, and
   the wording says so.
+- **Each day and each modal get their own boundary.** The day's boundary is
+  keyed on the date, so one day whose data throws does not trap the tab:
+  swiping, or the "Tänään" button in the fallback, moves to a fresh one. Modals
+  render outside the tab boundaries, so each has its own with a "Sulje" button;
+  a throw in one used to blank the whole app.
 - **Backup and the offline switch get their own boundary**, separate from the
   list editor above them. They are the escape hatches; they have to be reachable
   when the editor is the thing that failed.

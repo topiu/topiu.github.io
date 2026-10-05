@@ -46,13 +46,30 @@ export const humanDate = (k) => {
 /* ------------------------------------------------------------------ */
 /*  Step import — tolerant parser, because Shortcuts output varies      */
 /* ------------------------------------------------------------------ */
+/* a real calendar date as a key, or null — "2026-20-07" is not one */
+function validKey(y, m, d) {
+  const dt = new Date(y, m - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d ? keyOf(dt) : null;
+}
+
 export function toDateKey(v) {
   if (v == null) return null;
   const str = String(v).trim();
-  let m = str.match(/^(\d{4})-(\d{2})-(\d{2})/); /* ISO, with or without time */
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  let m = str.match(/^(\d{4})-(\d{2})-(\d{2})(.*)$/); /* ISO, with or without time */
+  if (m) {
+    /* A timestamp with a zone names an instant, and the diary day is the
+       *local* day of that instant: 2026-07-19T21:00:00Z is 20 July in Finland. */
+    if (/^[T ]\d.*(Z|[+-]\d{2}:?\d{2})$/i.test(m[4])) {
+      const d = new Date(str.replace(" ", "T"));
+      if (!isNaN(d.getTime())) return keyOf(d);
+    }
+    return validKey(+m[1], +m[2], +m[3]);
+  }
   m = str.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})/); /* 20.7.2026 or 20/7/2026 */
-  if (m) return `${m[3]}-${String(m[2]).padStart(2, "0")}-${String(m[1]).padStart(2, "0")}`;
+  if (m) {
+    const k = validKey(+m[3], +m[2], +m[1]);
+    if (k) return k;
+  }
   const d = new Date(str);
   if (!isNaN(d.getTime())) return keyOf(d);
   return null;

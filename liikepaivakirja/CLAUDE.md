@@ -55,7 +55,7 @@ editing instead.
 
 ```
 npm ci                                   # match the lockfile, as CI does
-npm test                                 # vitest, ~170 tests
+npm test                                 # vitest, ~210 tests
 npm run typecheck                        # tsc --noEmit — see caveat below
 BASE_PATH=/liikepaivakirja/ npm run build   # what the deploy runs
 npm run build:single                     # one self-contained .html, no worker
@@ -65,7 +65,7 @@ npm run dev
 Both build targets must pass before shipping. `build:single` is a real target, not
 a curiosity, and the service worker is deliberately absent from it.
 
-**`npm run typecheck` does not currently pass** — around 75 pre-existing errors,
+**`npm run typecheck` does not currently pass** — around 73 pre-existing errors,
 almost all of them tsc inferring required props from the first usage of a
 component whose props are untyped (`MiniBtn` needing `danger`, and so on), plus a
 few `unknown` arithmetic complaints. It is **not** in the deploy path; the workflow
@@ -87,14 +87,14 @@ src/storage/   store.ts (IndexedDB + async bridge), backup.ts (snapshots),
 src/platform/  download.ts share.ts sw.ts        (browser capability wrappers)
 src/ui/        App Today History Edit Modals Library BodyMap common
                Backup Help Psfs Report Restore Update  swipe.ts (hook)
-               ErrorBoundary (one per tab, mounted inside the shell)
+               ErrorBoundary (one per tab, per modal and per day)
 tests/         mirrors domain/ plus mount tests
 ```
 
 Each `src/*/` folder also holds a one-line `README` naming its job; those are
 copied into the build output and are harmless there.
 
-`src/ui/App.tsx` is 820 lines and owns all state, every mutation and every
+`src/ui/App.tsx` is about 1000 lines and owns all state, every mutation and every
 persistence call. Views are presentational and receive callbacks. When adding a
 feature, the state and the writes go in `App.tsx`; the rendering does not.
 
@@ -196,6 +196,31 @@ gets its own file, and resets the keys it depends on in `beforeEach`.
 **Do not replace a range of `README.md` by slicing between two headings.** Doing
 that silently deleted three unrelated sections. Insert with a single targeted
 `replace` on a unique anchor, then `grep '^## '` to confirm nothing vanished.
+
+**"Could not read" is not "empty".** `loadJSON` returns its fallback for a
+missing key, and it used to do the same when the read *failed* — so one flaky
+read at startup seeded the default programme over the real one, and an empty
+`logs` let the first tap write one day over the whole history. Startup uses
+`loadJSONStrict`, which throws on a failed read; anything that decides what to
+*write* from what it read must not use the forgiving variant.
+
+**A write is done when its transaction completes**, not when its request
+succeeds — a commit-time abort (a full disk) arrives after `success`. Writes
+that replace the dataset (import, restore, undo) go through `saveManyNow`, one
+transaction for every key plus the undo copy and the pre-restore snapshot, and
+the screen changes only after it commits.
+
+**Debounced text needs an owner that outlives the field.** A timer inside the
+input component dies when it unmounts — a swipe to another day — and React does
+not deliver the `blur` of a node it is removing, so `onBlur` is no safety net
+either. Typed text is scheduled in App, keyed by what it writes and the day it
+was typed on, and registered with `onFlush` so `flushAll` (page hide,
+backgrounding, applying an update) reaches it.
+
+**IDs are history.** Every log entry is keyed by exercise or symptom id. Anything
+that regenerates ids — a reset to defaults, a re-seed — detaches every logged
+session from its exercise. `resetToDefaults` keeps matching ids and archives
+items with history instead of dropping them.
 
 **Watch for `-0`.** `Math.abs`/sign arithmetic returning `-0` puts `-0px` into a
 transform. Guard the zero case.

@@ -3,8 +3,12 @@
 /* ------------------------------------------------------------------ */
 /*  Dose helpers                                                       */
 /* ------------------------------------------------------------------ */
+/* The leading whole number, or null. It used to strip every non-digit, so a
+   typed range "8-12" became 812 and "2.5" became 25. */
 export const toNum = (v) => {
-  const n = parseInt(String(v).replace(/[^0-9]/g, ""), 10);
+  if (v == null) return null;
+  const m = String(v).trim().match(/^\d+/);
+  const n = m ? parseInt(m[0], 10) : 0;
   return !n || n <= 0 ? null : n;
 };
 

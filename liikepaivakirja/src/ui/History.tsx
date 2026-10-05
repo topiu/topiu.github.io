@@ -1,7 +1,7 @@
 /* ui/History — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useEffect, useMemo } from "react";
 import { ChevronRight, X, Zap, Download, Upload, FileText } from "lucide-react";
-import { QUALITIES, addDays, dayLoad, goalOf, humanDate, keyOf, parseKey, qualityLabel, shortDate, startOfWeek } from "../domain";
+import { QUALITIES, addDays, dayLoad, goalOf, humanDate, isCompleteOn, keyOf, parseKey, qualityLabel, shortDate, startOfWeek } from "../domain";
 import { C } from "../styles/tokens";
 import { BodyLoadSection } from "./BodyMap";
 import { Card, Empty, IconBtn, SectionLabel, Stat } from "./common";
@@ -51,11 +51,15 @@ export function HistoryView({ days14, logs, symptoms, allSymptoms, exercises, co
     } else {
       start = addDays(today, -(range - 1));
     }
-    let ws = startOfWeek(start);
     const endWs = startOfWeek(today);
-    // safety cap ~2 years of weeks
+    /* capped at ~2 years of weeks — the *latest* two years: starting at the
+       earliest week and stopping after 106 used to drop the current weeks */
+    const MAX_WEEKS = 106;
+    let ws = startOfWeek(start);
+    const capWs = addDays(endWs, -7 * (MAX_WEEKS - 1));
+    if (ws < capWs) ws = capWs;
     const weeks = [];
-    for (let g = 0; g < 106 && ws <= endWs; g++) {
+    for (let g = 0; g < MAX_WEEKS && ws <= endWs; g++) {
       const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
       let train = 0;
       let load = 0;
@@ -63,7 +67,8 @@ export function HistoryView({ days14, logs, symptoms, allSymptoms, exercises, co
       let stepSum = 0;
       let stepDays = 0;
       days.forEach((d) => {
-        if (d > today) return;
+        /* the first week can begin before the range does; those days are not in it */
+        if (d > today || d < start) return;
         const l = logs[keyOf(d)];
         if (completeCountOf(l) > 0) train++;
         const dl = dayLoad(l);
@@ -76,7 +81,7 @@ export function HistoryView({ days14, logs, symptoms, allSymptoms, exercises, co
       });
       const wkMarks = marks.filter((m) => {
         const md = parseKey(m.date);
-        return md >= ws && md < addDays(ws, 7);
+        return md >= ws && md >= start && md < addDays(ws, 7);
       });
       weeks.push({ ws, label: `${ws.getDate()}.${ws.getMonth() + 1}.`, train, load, flareDays, steps: stepDays ? Math.round(stepSum / stepDays) : 0, marks: wkMarks });
       ws = addDays(ws, 7);
@@ -158,7 +163,10 @@ export function HistoryView({ days14, logs, symptoms, allSymptoms, exercises, co
             {diaryDays.map((d, i) => {
               const k = keyOf(d);
               const l = logs[k];
-              const dc = completeCountOf(l);
+              /* the ratio is out of the active exercises, so it counts only
+                 those; an archived exercise done still marks a training day */
+              const dc = activeDoneOf(exercises, l);
+              const trained = completeCountOf(l) > 0;
               const frac = totalEx > 0 ? Math.min(1, dc / totalEx) : 0;
               const flaredNames = l ? symptoms.filter((s) => l.flared.includes(s.id)).map((s) => s.name) : [];
               const hasNote = l && l.note && l.note.trim();
@@ -194,7 +202,7 @@ export function HistoryView({ days14, logs, symptoms, allSymptoms, exercises, co
                       </div>
                     )}
                   </div>
-                  <div style={{ width: 34, flex: "0 0 auto", textAlign: "right", fontSize: 13, fontWeight: 600, color: dc > 0 ? C.pineDeep : C.inkFaint, fontVariantNumeric: "tabular-nums" }}>{dc}/{totalEx}</div>
+                  <div style={{ width: 34, flex: "0 0 auto", textAlign: "right", fontSize: 13, fontWeight: 600, color: trained ? C.pineDeep : C.inkFaint, fontVariantNumeric: "tabular-nums" }}>{dc}/{totalEx}</div>
                 </div>
               );
             })}
@@ -213,7 +221,7 @@ export function HistoryView({ days14, logs, symptoms, allSymptoms, exercises, co
           <div style={{ fontSize: 12.5, color: C.inkSoft, margin: "-4px 2px 8px" }}>
             Vihreä = treeniä (tummempi = enemmän), <span style={{ color: C.amber, fontWeight: 700 }}>piste</span> = oirepäivä, ◆ = merkkipaalu.
           </div>
-          <MonthHeatmaps range={range} today={today} logs={logs} marks={marks} completeCountOf={completeCountOf} totalEx={totalEx} earliestKey={earliestKey} />
+          <MonthHeatmaps range={range} today={today} logs={logs} marks={marks} exercises={exercises} completeCountOf={completeCountOf} totalEx={totalEx} earliestKey={earliestKey} />
           <SectionLabel>Oireet — porautuminen</SectionLabel>
           <Card style={{ padding: 6 }}>
             {allSymptoms.length === 0 && <Empty>Ei oireita seurannassa.</Empty>}
@@ -304,7 +312,7 @@ export function WeeklyTrends({ weekly, rangeLabel }) {
 }
 
 /* ---- month heatmap calendar (quick browse of long ranges) ---- */
-export function MonthHeatmaps({ range, today, logs, marks, completeCountOf, totalEx, earliestKey }) {
+export function MonthHeatmaps({ range, today, logs, marks, exercises, completeCountOf, totalEx, earliestKey }) {
   const months = useMemo(() => {
     let start;
     if (range === 0) {
@@ -360,7 +368,8 @@ export function MonthHeatmaps({ range, today, logs, marks, completeCountOf, tota
                   const k = keyOf(d);
                   const future = d > today;
                   const l = logs[k];
-                  const dc = completeCountOf(l);
+                  const dc = activeDoneOf(exercises, l);
+                  const trained = completeCountOf(l) > 0;
                   const frac = totalEx > 0 ? dc / totalEx : 0;
                   const flare = dayLoad(l) > 0;
                   const hasMark = markDates.has(k);
@@ -368,7 +377,7 @@ export function MonthHeatmaps({ range, today, logs, marks, completeCountOf, tota
                     ? "transparent"
                     : frac >= 1
                     ? C.pine
-                    : frac > 0
+                    : frac > 0 || trained
                     ? C.pineSoft
                     : C.surfaceSoft;
                   const isTd = k === keyOf(today);
@@ -389,6 +398,9 @@ export function MonthHeatmaps({ range, today, logs, marks, completeCountOf, tota
     </Card>
   );
 }
+
+/* active exercises completed on a day — the numerator for "x / active total" */
+const activeDoneOf = (exercises, l) => (l ? exercises.filter((e) => !e.archived && isCompleteOn(l, e)).length : 0);
 
 /* ---- per-symptom drill-down + lag analysis over full history ---- */
 export function SymptomModal({ symptom, logs, exercises, completeCountOf, today, onClose }) {
@@ -427,15 +439,17 @@ export function SymptomModal({ symptom, logs, exercises, completeCountOf, today,
       const p2 = keyOf(addDays(d, -2));
       if (trainedOn(p1) || trainedOn(p2)) preTrained++;
     });
-    /* baseline: share of all logged-period days with training within any 2-day window.
-       Approximate with overall training-day share to keep it honest and simple. */
+    /* Baseline: the same question asked of every day — "was there training on
+       either of the two days before?" — so the two rates are comparable. It
+       used to be the share of days that were themselves training days, which
+       made any every-other-day routine look like 100 % against 50 %. */
     let baselineDays = 0;
     let baselineTrained = 0;
     if (allKeys.length) {
       const first = parseKey(allKeys[0]);
-      for (let d = new Date(first); d <= today; d = addDays(d, 1)) {
+      for (let d = addDays(first, 2); d <= today; d = addDays(d, 1)) {
         baselineDays++;
-        if (trainedOn(keyOf(d))) baselineTrained++;
+        if (trainedOn(keyOf(addDays(d, -1))) || trainedOn(keyOf(addDays(d, -2)))) baselineTrained++;
       }
     }
     const baselineShare = baselineDays ? baselineTrained / baselineDays : 0;
@@ -445,10 +459,12 @@ export function SymptomModal({ symptom, logs, exercises, completeCountOf, today,
       const d = parseKey(k);
       [1, 2].forEach((off) => {
         const l = logs[keyOf(addDays(d, -off))];
-        if (!l || !l.sets) return;
-        Object.keys(l.sets).forEach((id) => {
-          if (l.sets[id] > 0) exCounts[id] = (exCounts[id] || 0) + 1;
-        });
+        if (!l) return;
+        const ids = new Set([
+          ...Object.keys(l.sets || {}).filter((id) => l.sets[id] > 0),
+          ...Object.keys(l.mins || {}).filter((id) => l.mins[id] > 0),
+        ]);
+        ids.forEach((id) => (exCounts[id] = (exCounts[id] || 0) + 1));
       });
     });
     const exList = exercises
@@ -509,8 +525,7 @@ export function SymptomModal({ symptom, logs, exercises, completeCountOf, today,
               </div>
               {S.sinceLast != null && (
                 <div style={{ fontSize: 13, color: C.inkSoft, margin: "10px 2px 0" }}>
-                  Edellisestä esiintymästä <b style={{ color: S.sinceLast > (S.avgGap || 0) ? C.pineDeep : C.ink }}>{S.sinceLast} pv</b>
-                  {S.avgGap != null && S.sinceLast > S.avgGap && " — pidempään kuin keskimäärin 💪"}.
+                  Edellisestä esiintymästä <b style={{ color: C.ink }}>{S.sinceLast} pv</b>.
                   {" "}Voimakkuudet: {[3, 2, 1].filter((v) => S.sevCount[v] > 0).map((v) => `${S.sevCount[v]}× ${SEV_NAME[v]}`).join(", ") || "ei kirjattu"}.
                 </div>
               )}
@@ -525,7 +540,7 @@ export function SymptomModal({ symptom, logs, exercises, completeCountOf, today,
               <Card style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 13.5, color: C.ink, lineHeight: 1.55 }}>
                   Treeniä oli 1–2 päivää ennen oiretta <b>{S.preTrained}/{S.n}</b> kerralla ({Math.round((S.preTrained / S.n) * 100)} %).
-                  Vertailuksi: treenipäiviä on ollut noin <b>{Math.round(S.baselineShare * 100)} %</b> kaikista päivistä.
+                  Vertailuksi: kaikista päivistä treeniä oli 1–2 päivää ennen noin <b>{Math.round(S.baselineShare * 100)} %</b>.
                 </div>
                 {S.exList.length > 0 && (
                   <div style={{ marginTop: 10 }}>
@@ -547,8 +562,6 @@ export function SymptomModal({ symptom, logs, exercises, completeCountOf, today,
                       <>
                         1–2 pv ennen oiretta keskimäärin <b>{S.stepsBefore.toLocaleString("fi-FI")}</b>
                         {" "}(kaikkien päivien keskiarvo {S.stepsBaseline.toLocaleString("fi-FI")}).
-                        {S.stepsBefore > S.stepsBaseline * 1.15 && " Edeltävät päivät olivat selvästi vilkkaampia."}
-                        {S.stepsBefore < S.stepsBaseline * 0.85 && " Edeltävät päivät olivat tavallista hiljaisempia."}
                       </>
                     )}
                     {S.stepsOnFlare != null && <> Oirepäivinä <b>{S.stepsOnFlare.toLocaleString("fi-FI")}</b>.</>}

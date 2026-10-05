@@ -113,15 +113,15 @@ function useRunBackup({ exercises, symptoms, logs, marks, psfs, questions }) {
       }
 
       /* 3. plain download */
-      try {
-        download(filename, text, "application/json");
-        patchBackupState({ lastDate: todayKey, lastMethod: "download", lastVerified: false });
-        flash({ kind: "warn", text: "Ladattu. Tarkista että tiedosto tallentui." });
-        return true;
-      } catch {
+      /* download() reports failure by returning false, never by throwing; a
+         refused download must not be recorded as today's backup */
+      if (!download(filename, text, "application/json")) {
         flash({ kind: "error", text: "Tallennus epäonnistui." });
         return false;
       }
+      patchBackupState({ lastDate: todayKey, lastMethod: "download", lastVerified: false });
+      flash({ kind: "warn", text: "Ladattu. Tarkista että tiedosto tallentui." });
+      return true;
     },
     [exercises, symptoms, logs, marks, psfs, questions, flash]
   );

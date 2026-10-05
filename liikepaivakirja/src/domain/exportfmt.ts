@@ -20,7 +20,7 @@ export function buildCSV(exercises, symptoms, logs, marks, psfs) {
   const header = [
     "Päivä",
     ...exercises.map((e) => {
-      const d = doseLabel(e.dose);
+      const d = doseLabel(e.dose, e.unit);
       const arch = e.archived ? " [arkistoitu]" : "";
       return d ? `${e.name} (${d})${arch}` : `${e.name}${arch}`;
     }),

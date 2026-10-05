@@ -116,9 +116,22 @@ export function useDaySwipe({
     if (el) el.style.opacity = "0";
   };
 
-  const onTouchStart = useCallback((e: any) => {
+  /* Abandon a gesture. A pane that had already moved is snapped back: a second
+     finger mid-drag used to drop the gesture and leave the pane stuck sideways,
+     and the pane is persistent, so it stayed there across day changes. */
+  const abandon = () => {
+    const s = live.current;
     live.current = null;
-    if (!e.touches || e.touches.length !== 1) return; /* pinch or multi-touch */
+    hidePeek();
+    if (s && s.moved) setPane("none", `transform ${SNAP_MS}ms ease-out`, "1");
+  };
+
+  const onTouchStart = useCallback((e: any) => {
+    if (!e.touches || e.touches.length !== 1) {
+      abandon(); /* pinch or multi-touch */
+      return;
+    }
+    live.current = null;
     if (isBlocked(e.target)) return;
     const t = e.touches[0];
     const width = typeof window === "undefined" ? 0 : window.innerWidth;
@@ -132,7 +145,7 @@ export function useDaySwipe({
       const s = live.current;
       if (!s) return;
       if (!e.touches || e.touches.length !== 1) {
-        live.current = null;
+        abandon();
         return;
       }
       const t = e.touches[0];

@@ -248,7 +248,11 @@ export function RegionPicker({ kind, title, valueMap, structMap, onTap, onTapStr
 export function BodyLoadSection({ rangeDays, prevDays, logs, exercises, symptoms, rangeLabel, allowDelta }) {
   const [view, setView] = useState("back");
   const [typeFilter, setTypeFilter] = useState("all");
-  const [mode, setMode] = useState("dist"); // dist | delta
+  const [modePick, setMode] = useState("dist"); // dist | delta
+  /* "Muutos" only exists where there is a previous period to compare with;
+     picking it and then switching to Kaikki used to keep the delta legend over
+     the distribution colours, with no chip highlighted */
+  const mode = allowDelta && prevDays ? modePick : "dist";
   const [layer, setLayer] = useState("all"); // muscles | structures | all
   const [overlay, setOverlay] = useState(true);
   const [sel, setSel] = useState(null); // { t:'m'|'s', id }
@@ -271,6 +275,8 @@ export function BodyLoadSection({ rangeDays, prevDays, logs, exercises, symptoms
       days.forEach((d) => {
         const l = logs[keyOf(d)];
         if (!l) return;
+        /* structures exposed this day, so a day counts once whatever logged it */
+        const seenToday = new Set();
         /* endurance is measured in MET-minutes, not sets — never summed with
            strength work; only shown when the endurance filter is selected */
         if (typeFilter === "endurance" && l.mins) {
@@ -289,11 +295,14 @@ export function BodyLoadSection({ rangeDays, prevDays, logs, exercises, symptoms
               exp[sid] = (exp[sid] || 0) + (l.mins[exId] || 0);
               expByEx[sid] = expByEx[sid] || {};
               expByEx[sid][exId] = (expByEx[sid][exId] || 0) + (l.mins[exId] || 0);
+              if (!seenToday.has(sid)) {
+                seenToday.add(sid);
+                expDays[sid] = (expDays[sid] || 0) + 1;
+              }
             });
           });
         }
         if (!l.sets) return;
-        const seenToday = new Set();
         Object.keys(l.sets).forEach((exId) => {
           const ex = exOf[exId];
           if (!ex || isMin(ex)) return;
@@ -426,12 +435,12 @@ export function BodyLoadSection({ rangeDays, prevDays, logs, exercises, symptoms
     return {
       isM,
       name: `${structName(id)} · ${st && st.kind === "nerve" ? "hermo" : "nivel"}`,
-      metric: e > 0 ? `Altistus ${e} sarjaa · ${days} päivänä` : "Ei mobilisointia tällä välillä",
+      metric: e > 0 ? `Altistus ${e} ${typeFilter === "endurance" ? "min" : "sarjaa"} · ${days} päivänä` : "Ei mobilisointia tällä välillä",
       contrib,
       symNames,
       symDays,
     };
-  }, [sel, cur, exOf, symptoms, symLoad, maxLoad, mappedIds]);
+  }, [sel, cur, exOf, symptoms, symLoad, maxLoad, mappedIds, typeFilter]);
 
   const chip = (active, label, onClick) => (
     <button key={label} className="tap" onClick={onClick}

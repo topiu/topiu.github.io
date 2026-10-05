@@ -17,16 +17,16 @@
  * require risking the live data to get it, and making verification a side effect
  * of the restore flow means there is no separate code path to keep honest.
  *
- * Applying goes through App's `applyImport`, which snapshots to `physio-undo`
- * first — so a restore is undoable — and `forceSnapshot()` runs before that, so
- * the state you restored *away* from survives a second restore consuming the
- * undo slot.
+ * Applying goes through App's `applyImport`, which writes `physio-undo` — so a
+ * restore is undoable — and a pre-restore snapshot under its own key, so the
+ * state you restored *away* from survives a second restore consuming the undo
+ * slot. Both commit in the same transaction as the restore itself.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, FileCheck2, HardDriveDownload, RotateCcw } from "lucide-react";
 import { describeDataset, diffDatasets, humanDate, parseImport, snapshotToDataset } from "../domain";
-import { forceSnapshot, listSnapshots, readSnapshot } from "../storage/backup";
+import { isPreRestoreSnapshot, listSnapshots, readSnapshot, snapshotDate } from "../storage/backup";
 import { C } from "../styles/tokens";
 
 type Candidate = {
@@ -105,8 +105,6 @@ export function RestorePanel({ exercises, symptoms, logs, marks, psfs, questions
     setBusy(true);
     setError("");
     try {
-      /* keep the pre-restore state recoverable even after the undo slot is reused */
-      await forceSnapshot();
       await onRestore(pick.dataset);
       setDone("Tiedot palautettu.");
       setPick(null);
@@ -146,7 +144,16 @@ export function RestorePanel({ exercises, symptoms, logs, marks, psfs, questions
             {canUndo && (
               <button
                 className="tap"
-                onClick={onUndo}
+                onClick={async () => {
+                  setError("");
+                  setDone("");
+                  const ok = await onUndo();
+                  if (ok === false) setError("Peruminen ei onnistunut. Tiedot jäivät ennalleen.");
+                  else {
+                    setDone("Edelliset tiedot palautettu.");
+                    setSnaps(null);
+                  }
+                }}
                 style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", marginBottom: 12, padding: "11px", borderRadius: 12, border: `1px solid ${C.amberLine}`, background: C.amberTint, color: C.amber, fontSize: 14, fontWeight: 600 }}
               >
                 <RotateCcw size={16} /> Peru viimeisin tuonti tai palautus
@@ -195,8 +202,9 @@ export function RestorePanel({ exercises, symptoms, logs, marks, psfs, questions
                       }}
                     >
                       <span style={{ minWidth: 0 }}>
-                        <span style={{ fontSize: 13.5, fontWeight: 600, color: C.ink }}>{humanDate(s.date)}</span>
+                        <span style={{ fontSize: 13.5, fontWeight: 600, color: C.ink }}>{humanDate(snapshotDate(s.date))}</span>
                         {s.at && <span style={{ fontSize: 12, color: C.inkFaint }}> {clock(s.at)}</span>}
+                        {isPreRestoreSnapshot(s.date) && <span style={{ fontSize: 12, color: C.inkFaint }}> · ennen palautusta</span>}
                         <span style={{ display: "block", fontSize: 12, color: C.inkSoft, marginTop: 1 }}>
                           {s.summary.days} päivää · {s.summary.exercises} liikettä · {s.summary.psfs} PSFS
                         </span>
@@ -258,7 +266,7 @@ function DiffCard({ current, pick, onApply, onCancel, busy }) {
   return (
     <div style={{ marginTop: 14, background: C.surfaceSoft, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12 }}>
       <div style={{ fontSize: 13.5, fontWeight: 600, color: C.ink }}>
-        {pick.kind === "snapshot" ? `Kopio ${humanDate(pick.label)}` : pick.label}
+        {pick.kind === "snapshot" ? `Kopio ${humanDate(snapshotDate(pick.label))}` : pick.label}
         {pick.detail && <span style={{ fontWeight: 400, color: C.inkFaint }}> · {pick.detail}</span>}
       </div>
       {d.incoming.first && (
@@ -289,22 +297,35 @@ function DiffCard({ current, pick, onApply, onCancel, busy }) {
           Sisältö vastaa nykyisiä tietoja. Palautus ei muuttaisi mitään — tämä on hyvä tulos
           tarkistukselle.
         </div>
-      ) : d.lostDays.length > 0 ? (
+      ) : d.destructive ? (
         <div
           style={{ display: "flex", gap: 8, marginTop: 10, background: C.amberTint, border: `1px solid ${C.amberLine}`, borderRadius: 10, padding: "9px 11px" }}
         >
           <AlertTriangle size={16} style={{ flex: "0 0 auto", color: C.amber, marginTop: 1 }} />
           <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.5 }}>
-            <b>
-              {d.lostDays.length} päivän merkinnät poistuisivat
-            </b>{" "}
-            — vanhin {humanDate(d.lostDays[0])}, uusin {humanDate(d.lostDays[d.lostDays.length - 1])}. Vie
-            nykyiset tiedot tiedostoksi ensin, jos et ole varma.
+            {d.lostDays.length > 0 && (
+              <div>
+                <b>{d.lostDays.length} päivän merkinnät poistuisivat</b> — vanhin {humanDate(d.lostDays[0])}, uusin{" "}
+                {humanDate(d.lostDays[d.lostDays.length - 1])}.
+              </div>
+            )}
+            {d.changedDays.length > 0 && (
+              <div>
+                <b>{d.changedDays.length} päivän merkinnät korvautuisivat</b> varmuuskopion versiolla — uusin{" "}
+                {humanDate(d.changedDays[d.changedDays.length - 1])}.
+              </div>
+            )}
+            {(d.delta.marks < 0 || d.delta.psfs < 0 || d.delta.exercises < 0) && (
+              <div>
+                <b>Osa liikkeistä, merkkipaaluista tai PSFS-arvioista poistuisi.</b>
+              </div>
+            )}
+            <div>Vie nykyiset tiedot tiedostoksi ensin, jos et ole varma.</div>
           </div>
         </div>
       ) : (
         <div style={{ fontSize: 12.5, color: C.inkSoft, marginTop: 8, lineHeight: 1.5 }}>
-          Yhtään nykyistä päivää ei poistuisi.
+          Yhtään nykyistä merkintää ei poistuisi eikä muuttuisi.
         </div>
       )}
 
@@ -313,7 +334,7 @@ function DiffCard({ current, pick, onApply, onCancel, busy }) {
           className="tap"
           onClick={onApply}
           disabled={busy}
-          style={{ flex: 1, padding: "12px", borderRadius: 12, background: d.lostDays.length > 0 ? C.amber : C.pine, color: "#fff", fontSize: 14.5, fontWeight: 600, opacity: busy ? 0.7 : 1 }}
+          style={{ flex: 1, padding: "12px", borderRadius: 12, background: d.destructive ? C.amber : C.pine, color: "#fff", fontSize: 14.5, fontWeight: 600, opacity: busy ? 0.7 : 1 }}
         >
           {busy ? "Palautetaan…" : "Palauta"}
         </button>

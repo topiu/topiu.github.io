@@ -12,10 +12,17 @@
  *     snapshot per day+exercise for exactly this reason; a report that ignored it
  *     would rewrite history every time the physio changes the prescription.
  *
- *  2. Each exercise's denominator starts on the day it first appears anywhere in
- *     the log, not at the start of the range. An exercise added last week must
- *     not read as three weeks of missed sessions. `since` carries that date so
- *     the page can say so out loud.
+ *  2. Each exercise's denominator starts on the day it was added, or the day it
+ *     first appears anywhere in the log if earlier, not at the start of the
+ *     range. An exercise added last week must not read as three weeks of missed
+ *     sessions. `since` carries that date so the page can say so out loud.
+ *     Only an exercise with neither (one from before `added` was recorded, and
+ *     never logged) is counted from the start of the range.
+ *
+ *  2b. Per exercise, over-delivery is shown above 100 % as before. The
+ *     programme total credits each exercise at most its weekly target
+ *     (`credited`), so extra sessions of one exercise cannot cover for another
+ *     that was skipped — daily A plus never-done B used to total 117 %.
  *
  *  3. Nothing is imputed and nothing is interpreted. No trend arrows on symptom
  *     counts, no "improving", no advice. The one interpretive statement on the
@@ -24,7 +31,8 @@
 
 import { addDays, keyOf, parseKey } from "./dates";
 import { doseLabel, goalMinOf, goalOf, isCompleteOn, isMin } from "./dose";
-import { FREQ_DAILY, expectedSessions, freqLabel, freqOf } from "./freq";
+import { FREQ_DAILY, creditedSessions, expectedSessions, freqLabel, freqOf } from "./freq";
+import { DATE_RE } from "./dates";
 import { psfsActivityChanges, psfsChange, psfsSeries } from "./psfs";
 import { SEVERITY, qualityLabel } from "./taxonomy";
 
@@ -74,7 +82,9 @@ export function buildReport({ exercises = [], symptoms = [], logs = {}, marks = 
   let denomSum = 0;
   const exRows = activeEx.map((ex) => {
     const firstSeen = firstSeenOf(logs, ex.id);
-    const since = firstSeen && firstSeen > startKey ? firstSeen : startKey;
+    const added = typeof ex.added === "string" && DATE_RE.test(ex.added) ? ex.added : null;
+    const began = [firstSeen, added].filter(Boolean).sort()[0] || null;
+    const since = began && began > startKey ? began : startKey;
     const keys = rangeKeys.filter((k) => k >= since);
     let daysComplete = 0;
     let daysAny = 0;
@@ -97,7 +107,8 @@ export function buildReport({ exercises = [], symptoms = [], logs = {}, marks = 
        anything less frequent, calendar days made a perfect record look like a
        failure — a 3×/week exercise could not exceed about 43 %. */
     const target = expectedSessions(logs, ex, keys);
-    doneSum += daysComplete;
+    const credited = creditedSessions(logs, ex, keys);
+    doneSum += credited;
     denomSum += target;
     return {
       id: ex.id,
@@ -112,6 +123,7 @@ export function buildReport({ exercises = [], symptoms = [], logs = {}, marks = 
       target,
       daysAny,
       daysComplete,
+      credited,
       completePct: pct(daysComplete, target),
       over,
       unitsDone,
@@ -128,7 +140,9 @@ export function buildReport({ exercises = [], symptoms = [], logs = {}, marks = 
     if (!l) return;
     loggedDays++;
     const done = activeEx.filter((ex) => isCompleteOn(l, ex)).length;
-    if (done > 0) trainedDays++;
+    /* a day an archived exercise was done is still a training day — the same
+       rule as Historia, so the two agree */
+    if (exercises.some((ex) => isCompleteOn(l, ex))) trainedDays++;
     if (activeEx.length && done === activeEx.length) fullDays++;
   });
 

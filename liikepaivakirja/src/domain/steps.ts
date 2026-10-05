@@ -72,7 +72,7 @@ export function parseSteps(text) {
   const rows = [];
   t.split(/\r?\n/).forEach((line) => {
     if (!line.trim()) return;
-    const parts = line.split(/[;,\t]/).map((x) => x.trim().replace(/^"|"$/g, ""));
+    const parts = splitDelimited(line);
     if (parts.length < 2) return;
     const d = toDateKey(parts[0]);
     const v = parseInt(parts[1].replace(/[^0-9]/g, ""), 10);
@@ -80,6 +80,30 @@ export function parseSteps(text) {
   });
   if (rows.length) return dedupeSteps(rows);
   return { ok: false, error: "Muotoa ei tunnistettu. Odotettu JSON tai rivit muodossa 2026-07-20;8432." };
+}
+
+/* One line of CSV/TSV/semicolon text. Quoted fields may contain separators —
+   "8,432" is one field, not 8 and 432. */
+export function splitDelimited(line) {
+  const out = [];
+  let cur = "";
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === '"' && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else if (c === '"') q = false;
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ";" || c === "," || c === "\t") {
+      out.push(cur.trim());
+      cur = "";
+    } else cur += c;
+  }
+  out.push(cur.trim());
+  return out;
 }
 
 export function dedupeSteps(rows) {

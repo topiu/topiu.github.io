@@ -1,7 +1,9 @@
 /* ui/App — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { EMPTY_DOSE, FREQ_DAILY, LIB_BY_ID, addDays, doseSnapshotOf, emptyLog, emptyPsfs, expectedSessions, freqLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizePsfs, normalizeSymptoms, psfsAddActivity, psfsForgetActivity, psfsRenameActivity, psfsRetireActivity, psfsSetScore, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid, weekProgress } from "../domain";
-import { deleteKey, hasStore, loadJSON, saveJSON, saveJSONDebounced, saveJSONNow } from "../storage/store";
+import { EMPTY_DOSE, FREQ_DAILY, LIB_BY_ID, addDays, datasetToValues, doseSnapshotOf, emptyLog, emptyPsfs, expectedSessions, freqLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizePsfs, normalizeSymptoms, psfsAddActivity, psfsForgetActivity, psfsRenameActivity, psfsRetireActivity, psfsSetScore, resetToDefaults, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid, usedIdsInLogs, weekProgress } from "../domain";
+import { flushSync } from "react-dom";
+import { hasStore, loadJSON, loadJSONStrict, onFlush, saveJSON, saveJSONDebounced, saveManyNow, subscribeWriteStatus } from "../storage/store";
+import { preRestoreSnapshot, prune as pruneSnapshots } from "../storage/backup";
 import { C, FONT } from "../styles/tokens";
 import { BackupBanner, BackupSettings } from "./Backup";
 import { EditView } from "./Edit";
@@ -18,6 +20,8 @@ import { Style } from "./common";
 /* ================================================================== */
 export default function App() {
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [saveFailing, setSaveFailing] = useState(false);
   const [tab, setTab] = useState("today");
   const [exercises, setExercises] = useState([]);
   const [symptoms, setSymptoms] = useState([]);
@@ -36,6 +40,34 @@ export default function App() {
   const [programUndo, setProgramUndo] = useState<any>(null);
   const undoTimer = useRef<any>(null);
 
+  /* The calendar moves on while the app stays open (a Home Screen app resumed
+     in the morning is the same page as last night). Re-render when the date
+     changes, and if "today" was selected, follow it — otherwise every tap after
+     midnight was logged into yesterday. Checked on resume and once a minute. */
+  const [, setDayTick] = useState(0);
+  const todayKeyRef = useRef(keyOf(startOfToday()));
+  useEffect(() => {
+    const check = () => {
+      const now = keyOf(startOfToday());
+      const was = todayKeyRef.current;
+      if (now === was) return;
+      todayKeyRef.current = now;
+      setSelected((d) => (keyOf(d) === was ? startOfToday() : d));
+      setDayTick((n) => n + 1);
+    };
+    const onVis = () => document.visibilityState === "visible" && check();
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pageshow", check);
+    window.addEventListener("focus", check);
+    const iv = setInterval(check, 60000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pageshow", check);
+      window.removeEventListener("focus", check);
+      clearInterval(iv);
+    };
+  }, []);
+
   const today = startOfToday();
   const selKey = keyOf(selected);
   const isToday = selKey === keyOf(today);
@@ -47,10 +79,26 @@ export default function App() {
   stateRef.current = { exercises, symptoms, logs, marks, psfs, questions };
   const undoRef = useRef(null);
 
-  /* ---- initial load + migration ---- */
+  /* ---- initial load + migration ----
+     Reads are strict: a read that *fails* (as opposed to a key that is absent)
+     stops here with an error screen, before anything is seeded or written. It
+     used to fall back to "empty", seed the default programme and save it over
+     the real one — and an empty `logs` meant the first tap wrote one day over
+     the whole history. */
   useEffect(() => {
     (async () => {
-      const cfg = await loadJSON("physio-config", null);
+      let cfg, raw, rawMarks, rawPsfs, q;
+      try {
+        cfg = await loadJSONStrict("physio-config", null);
+        raw = await loadJSONStrict("physio-logs", {});
+        rawMarks = await loadJSONStrict("physio-marks", []);
+        rawPsfs = await loadJSONStrict("physio-psfs", null);
+        q = await loadJSONStrict("physio-questions", "");
+      } catch {
+        setLoadError(true);
+        setLoading(false);
+        return;
+      }
       let ex = cfg ? normalizeExercises(cfg.exercises) : null;
       let sy = cfg ? normalizeSymptoms(cfg.symptoms) : null;
       if (!ex || !ex.length || !sy) {
@@ -63,7 +111,6 @@ export default function App() {
 
       const exById = {};
       ex.forEach((e) => (exById[e.id] = e));
-      const raw = await loadJSON("physio-logs", {});
       const normLogs = normalizeLogs(raw, exById);
       setLogs(normLogs);
       /* persist backfilled goal snapshots only if normalization changed anything */
@@ -72,10 +119,8 @@ export default function App() {
       } catch {
         /* ignore */
       }
-      const rawMarks = await loadJSON("physio-marks", []);
       setMarks(normalizeMarks(rawMarks));
-      setPsfs(normalizePsfs(await loadJSON("physio-psfs", null)));
-      const q = await loadJSON("physio-questions", "");
+      setPsfs(normalizePsfs(rawPsfs));
       setQuestions(typeof q === "string" ? q : "");
       const ui = await loadJSON("physio-ui", null);
       setHelpDismissed(!!(ui && ui.helpDismissed));
@@ -88,12 +133,18 @@ export default function App() {
     })();
   }, []);
 
+  /* a failing write must be visible: the diary would otherwise look saved */
+  useEffect(() => subscribeWriteStatus(setSaveFailing), []);
+
   const persistConfig = useCallback((ex, sy) => {
     saveJSON("physio-config", { exercises: ex, symptoms: sy });
   }, []);
 
+  /* Import and restore replace the whole dataset. Everything is written in ONE
+     transaction — the undo copy, a pre-restore snapshot and the new data — and
+     only then is the screen updated. If the write fails nothing has changed,
+     on disk or on screen, and the caller is told by the rejection. */
   const applyImport = useCallback(async (res) => {
-    /* snapshot current data so an accidental/wrong import can be undone */
     const prev = {
       exercises: stateRef.current.exercises || [],
       symptoms: stateRef.current.symptoms || [],
@@ -102,30 +153,41 @@ export default function App() {
       psfs: stateRef.current.psfs || emptyPsfs(),
       questions: stateRef.current.questions || "",
     };
+    const next = {
+      exercises: res.ex,
+      symptoms: res.sy,
+      logs: res.logs,
+      marks: res.marks || [],
+      psfs: res.psfs || emptyPsfs(),
+      questions: typeof res.questions === "string" ? res.questions : prev.questions,
+    };
+    const snap = preRestoreSnapshot(datasetToValues(prev));
+    const ok = await saveManyNow({
+      ...datasetToValues(next),
+      "physio-undo": prev,
+      [snap.key]: snap.value,
+    });
+    if (!ok) throw new Error("import was not saved");
+    void pruneSnapshots().catch(() => {});
+
     undoRef.current = prev;
     setCanUndoImport(true);
-
-    setExercises(res.ex);
-    setSymptoms(res.sy);
-    setLogs(res.logs);
-    setMarks(res.marks || []);
-    setPsfs(res.psfs || emptyPsfs());
-    if (typeof res.questions === "string") setQuestions(res.questions);
+    setExercises(next.exercises);
+    setSymptoms(next.symptoms);
+    setLogs(next.logs);
+    setMarks(next.marks);
+    setPsfs(next.psfs);
+    setQuestions(next.questions);
     setSelected(startOfToday());
-
-    /* write sequentially so the four keys don't race the rate limiter,
-       and await so persistence is confirmed before we report success */
-    await saveJSONNow("physio-undo", prev);
-    await saveJSONNow("physio-config", { exercises: res.ex, symptoms: res.sy });
-    await saveJSONNow("physio-logs", res.logs);
-    await saveJSONNow("physio-marks", res.marks || []);
-    await saveJSONNow("physio-psfs", res.psfs || emptyPsfs());
-    if (typeof res.questions === "string") await saveJSONNow("physio-questions", res.questions);
   }, []);
 
+  /* Resolves false, changing nothing, if the write fails. The undo copy is
+     deleted in the same transaction that restores from it, never before. */
   const undoImport = useCallback(async () => {
     const prev = undoRef.current;
-    if (!prev) return;
+    if (!prev) return false;
+    const ok = await saveManyNow(datasetToValues(prev), ["physio-undo"]);
+    if (!ok) return false;
     setExercises(prev.exercises || []);
     setSymptoms(prev.symptoms || []);
     setLogs(prev.logs || {});
@@ -133,18 +195,9 @@ export default function App() {
     setPsfs(prev.psfs || emptyPsfs());
     setQuestions(prev.questions || "");
     setSelected(startOfToday());
-    await saveJSONNow("physio-config", { exercises: prev.exercises || [], symptoms: prev.symptoms || [] });
-    await saveJSONNow("physio-logs", prev.logs || {});
-    await saveJSONNow("physio-marks", prev.marks || []);
-    await saveJSONNow("physio-psfs", prev.psfs || emptyPsfs());
-    await saveJSONNow("physio-questions", prev.questions || "");
     undoRef.current = null;
     setCanUndoImport(false);
-    try {
-      if (hasStore) await deleteKey("physio-undo");
-    } catch {
-      /* ignore */
-    }
+    return true;
   }, []);
 
   /* ---- marks (milestones/annotations) ---- */
@@ -308,7 +361,6 @@ export default function App() {
      removing friction, not for talking you into extra sessions. */
   const completeProgram = useCallback(() => {
     const cur = logs[selKey] || emptyLog();
-    const before = logs[selKey] ? JSON.parse(JSON.stringify(logs[selKey])) : null;
 
     /* Decide everything here, synchronously, against the committed log. The
        first version of this counted the fills inside the setLogs updater, which
@@ -321,7 +373,7 @@ export default function App() {
     exercises.forEach((ex) => {
       if (ex.archived) return;
       if (isCompleteOn(cur, ex)) return;
-      if (freqOf(ex) < FREQ_DAILY && weekProgress(logs, ex, selKey).met) return;
+      if (weekProgress(logs, ex, selKey).met) return;
       const snap = (cur.goal && cur.goal[ex.id]) || doseSnapshotOf(ex);
       const probe = { goal: { [ex.id]: snap } };
       if (isMin(ex)) {
@@ -351,25 +403,44 @@ export default function App() {
     });
 
     if (undoTimer.current) window.clearTimeout(undoTimer.current);
-    setProgramUndo({ key: selKey, log: before, filled });
+    setProgramUndo({
+      key: selKey,
+      filled,
+      sets: Object.keys(addSets),
+      mins: Object.keys(addMins),
+      before: {
+        sets: { ...(cur.sets || {}) },
+        mins: { ...(cur.mins || {}) },
+        goal: { ...(cur.goal || {}) },
+      },
+    });
     undoTimer.current = window.setTimeout(() => setProgramUndo(null), 9000);
   }, [exercises, logs, selKey, updateLog]);
 
-  /* A bulk write deserves a way back. Restores the exact log object captured
-     before the fill, rather than trying to subtract what was added. */
+  /* A bulk write deserves a way back. Reverts only what the fill wrote —
+     restoring the whole day's log as it was before the fill also erased a
+     symptom or a note recorded in the seconds between the fill and the undo. */
   const undoProgram = useCallback(() => {
     const u = programUndo;
     if (!u) return;
     if (undoTimer.current) window.clearTimeout(undoTimer.current);
     setProgramUndo(null);
-    setLogs((prev) => {
-      const map = { ...prev };
-      if (u.log) map[u.key] = u.log;
-      else delete map[u.key];
-      saveJSON("physio-logs", map);
-      return map;
+    updateLog(u.key, (l) => {
+      const revert = (field, id) => {
+        if (u.before[field][id] != null) l[field][id] = u.before[field][id];
+        else delete l[field][id];
+      };
+      u.sets.forEach((id) => {
+        revert("sets", id);
+        revert("goal", id);
+      });
+      u.mins.forEach((id) => {
+        revert("mins", id);
+        revert("goal", id);
+      });
+      return l;
     });
-  }, [programUndo]);
+  }, [programUndo, updateLog]);
 
   /* One tap both flares a symptom and grades it, because those were never two
      decisions: nobody knows a symptom came back without also knowing roughly how
@@ -405,11 +476,6 @@ export default function App() {
       return l;
     });
 
-  const setSteps = (n) =>
-    updateLog(selKey, (l) => {
-      l.steps = Math.max(0, Math.min(parseInt(n, 10) || 0, 200000));
-      return l;
-    });
   const setQuality = (id, q) =>
     updateLog(selKey, (l) => {
       if (l.quality[id] === q) delete l.quality[id];
@@ -423,13 +489,68 @@ export default function App() {
       return l;
     });
 
-  /* ---- note ---- */
-  const noteTimer = useRef();
-  const commitNote = (v) => updateLog(selKey, (l) => ((l.note = v), l));
+  /* ---- typed text: steps and the note ----
+     Debounced, but a pending commit is never dropped. It used to live in a
+     timer that was cancelled when the field unmounted (a swipe to another day
+     or a tab switch inside the debounce window lost what was typed), that one
+     day's typing cancelled another's, and that flushAll could not see, so
+     backgrounding the app or applying an update lost the last keystrokes.
+     Each commit is now keyed by what it writes, bound to the day it was typed
+     on, and flushed by flushAll through onFlush. */
+  const pendingText = useRef(new Map());
+  const scheduleText = useCallback((id, commit, ms) => {
+    const m = pendingText.current;
+    const prev = m.get(id);
+    if (prev) clearTimeout(prev.t);
+    const t = setTimeout(() => {
+      m.delete(id);
+      commit();
+    }, ms);
+    m.set(id, { t, commit });
+  }, []);
+  const cancelText = useCallback((id) => {
+    const prev = pendingText.current.get(id);
+    if (prev) clearTimeout(prev.t);
+    pendingText.current.delete(id);
+  }, []);
+  useEffect(
+    () =>
+      onFlush(() => {
+        const all = [...pendingText.current.values()];
+        pendingText.current.clear();
+        all.forEach((p) => clearTimeout(p.t));
+        /* synchronously, so the write has started before the page is frozen */
+        if (all.length) flushSync(() => all.forEach((p) => p.commit()));
+      }),
+    []
+  );
+
+  const setStepsOn = useCallback(
+    (key, n) =>
+      updateLog(key, (l) => {
+        l.steps = Math.max(0, Math.min(parseInt(n, 10) || 0, 200000));
+        return l;
+      }),
+    [updateLog]
+  );
+  const onStepsChange = (v) => {
+    const key = selKey;
+    scheduleText(`steps:${key}`, () => setStepsOn(key, v), 700);
+  };
+  const commitSteps = (v) => {
+    cancelText(`steps:${selKey}`);
+    setStepsOn(selKey, v);
+  };
+
+  const commitNoteOn = useCallback((key, v) => updateLog(key, (l) => ((l.note = v), l)), [updateLog]);
   const onNoteChange = (e) => {
     const v = e.target.value;
-    clearTimeout(noteTimer.current);
-    noteTimer.current = setTimeout(() => commitNote(v), 500);
+    const key = selKey;
+    scheduleText(`note:${key}`, () => commitNoteOn(key, v), 500);
+  };
+  const commitNote = (v) => {
+    cancelText(`note:${selKey}`);
+    commitNoteOn(selKey, v);
   };
 
   /* ---- edit ops ---- */
@@ -486,6 +607,7 @@ export default function App() {
           taken.add(name.toLowerCase());
           added.push({
             id: uid(),
+            added: keyOf(startOfToday()),
             name,
             desc: t.note || "",
             type: t.type,
@@ -509,20 +631,20 @@ export default function App() {
   /* merge imported step counts; never overwrites exercises, symptoms or notes,
      so the import can be re-run as often as you like */
   const applySteps = useCallback(async (rows) => {
+    /* Decided synchronously against committed state, then applied — counting
+       inside a setLogs updater is the trap CLAUDE.md describes, and saving
+       whatever the ref held a tick later relied on React's timing. */
+    const map = { ...(stateRef.current.logs || {}) };
     let touched = 0;
-    setLogs((prev) => {
-      const map = { ...prev };
-      rows.forEach(({ date, steps }) => {
-        const src = map[date] || emptyLog();
-        if ((src.steps || 0) === steps) return;
-        touched++;
-        map[date] = { ...src, steps };
-      });
-      return map;
+    rows.forEach(({ date, steps }) => {
+      const src = map[date] || emptyLog();
+      if ((src.steps || 0) === steps) return;
+      touched++;
+      map[date] = { ...src, steps };
     });
-    /* read back from the ref on the next tick so we persist the merged result */
-    await new Promise((r) => setTimeout(r, 0));
-    await saveJSONNow("physio-logs", stateRef.current.logs || {});
+    if (!touched) return 0;
+    if (!(await saveManyNow({ "physio-logs": map }))) throw new Error("steps were not saved");
+    setLogs(map);
     return touched;
   }, []);
 
@@ -573,7 +695,7 @@ export default function App() {
   const addItem = (which, name) => {
     const n = name.trim();
     if (!n) return;
-    const item = which === "ex" ? { id: uid(), name: n, desc: "", dose: { ...EMPTY_DOSE } } : { id: uid(), name: n };
+    const item = which === "ex" ? { id: uid(), name: n, desc: "", dose: { ...EMPTY_DOSE }, added: keyOf(startOfToday()) } : { id: uid(), name: n };
     mutateList(which, (arr) => [...arr, item]);
   };
   const removeItem = (which, id) => mutateList(which, (arr) => arr.filter((i) => i.id !== id));
@@ -586,7 +708,8 @@ export default function App() {
       return arr;
     });
   const resetList = (which) => {
-    const next = which === "ex" ? seedExercises() : seedSymptoms();
+    const seeds = which === "ex" ? seedExercises() : seedSymptoms();
+    const next = resetToDefaults(val(which), seeds, usedIdsInLogs(logs, which), which === "ex" ? keyOf(startOfToday()) : undefined);
     setter(which)(next);
     which === "ex" ? persistConfig(next, symptoms) : persistConfig(exercises, next);
   };
@@ -594,15 +717,9 @@ export default function App() {
   /* ---- derived stats ---- */
   const activeExercises = useMemo(() => exercises.filter((e) => !e.archived), [exercises]);
   const activeSymptoms = useMemo(() => symptoms.filter((s) => !s.archived), [symptoms]);
-  const completeCountOf = useCallback(
-    (l) =>
-      l
-        ? exercises.filter((e) =>
-            isMin(e) ? ((l.mins && l.mins[e.id]) || 0) >= goalMinOf(l, e) : ((l.sets && l.sets[e.id]) || 0) >= goalOf(l, e)
-          ).length
-        : 0,
-    [exercises]
-  );
+  /* Completed exercises on a day, archived ones included: archiving an
+     exercise must not turn the days it was done into rest days. */
+  const completeCountOf = useCallback((l) => (l ? exercises.filter((e) => isCompleteOn(l, e)).length : 0), [exercises]);
   const archiveItem = (which, id, archived) =>
     mutateList(which, (arr) => arr.map((i) => (i.id === id ? { ...i, archived } : i)));
   const days14 = useMemo(() => Array.from({ length: 14 }, (_, i) => addDays(today, -i)), [today]);
@@ -628,6 +745,28 @@ export default function App() {
     [days14, logs]
   );
 
+  if (loadError) {
+    return (
+      <div className="ptf" style={{ background: C.bg, minHeight: "100vh", fontFamily: FONT, color: C.ink }}>
+        <Style />
+        <div style={{ maxWidth: 420, margin: "0 auto", padding: "15vh 24px 0" }}>
+          <h1 style={{ fontSize: 19, fontWeight: 600, margin: "0 0 8px" }}>Tietoja ei voitu lukea</h1>
+          <p style={{ fontSize: 14.5, lineHeight: 1.55, color: C.inkSoft, margin: "0 0 18px" }}>
+            Selaimen tallennustila ei vastannut. Sovellus ei kirjoittanut mitään, joten merkinnät ovat
+            tallessa. Lataa sivu uudelleen.
+          </p>
+          <button
+            className="tap"
+            onClick={() => window.location.reload()}
+            style={{ padding: "12px 18px", borderRadius: 12, background: C.pine, color: "#fff", fontSize: 14.5, fontWeight: 600 }}
+          >
+            Lataa uudelleen
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="ptf" style={{ background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: C.inkFaint, fontFamily: FONT }}>
@@ -652,6 +791,13 @@ export default function App() {
               that come up months in, not only on the first run. */}
           <HelpButton onClick={() => setHelpOpen(true)} />
         </header>
+
+        {saveFailing && (
+          <div role="alert" style={{ marginBottom: 14, fontSize: 13, lineHeight: 1.5, color: C.ink, background: C.amberTint, border: `1px solid ${C.amberLine}`, borderRadius: 12, padding: "10px 12px" }}>
+            <b>Tallennus ei juuri nyt onnistu.</b> Sovellus yrittää uudelleen itse. Jos ilmoitus ei katoa,
+            vie tiedot tiedostoksi ennen kuin suljet sovelluksen.
+          </div>
+        )}
 
         {/* Tabs */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14, padding: 4, marginBottom: 20 }}>
@@ -697,7 +843,9 @@ export default function App() {
               The data attribute is a deliberate test hook — the drag is asserted
               on the DOM, because that is where it is written. */}
           <div ref={swipe.paneRef} data-day-pane="">
-          <div key={selKey}>
+          {/* Keyed on the day, so one day whose data throws does not trap the
+              whole tab: swiping, or the button, moves to a fresh boundary. */}
+          <ErrorBoundary key={selKey} label="Päivä" action={isToday ? null : { label: "Tänään", run: () => setSelected(startOfToday()) }}>
           <TodayView
             key={selKey}
             selected={selected}
@@ -712,7 +860,8 @@ export default function App() {
             setSymptomLevel={setSymptomLevel}
             clearSymptom={clearSymptom}
             setQuality={setQuality}
-            setSteps={setSteps}
+            onStepsChange={onStepsChange}
+            commitSteps={commitSteps}
             onNoteChange={onNoteChange}
             commitNote={commitNote}
             marks={marks.filter((m) => m.date === selKey)}
@@ -731,7 +880,7 @@ export default function App() {
             programUndo={programUndo}
             undoProgram={undoProgram}
           />
-          </div>
+          </ErrorBoundary>
           </div>
           </div>
           </ErrorBoundary>
@@ -814,24 +963,42 @@ export default function App() {
         <OfflineNote />
       </div>
 
+      {/* Modals render outside the tab boundaries, so each gets its own: a
+          throw in one used to blank the whole app. */}
       {exportOpen && (
-        <ExportModal exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} questions={questions} onClose={() => setExportOpen(false)} />
+        <ErrorBoundary label="Vienti" action={{ label: "Sulje", run: () => setExportOpen(false) }}>
+          <ExportModal exercises={exercises} symptoms={symptoms} logs={logs} marks={marks} psfs={psfs} questions={questions} onClose={() => setExportOpen(false)} />
+        </ErrorBoundary>
       )}
-      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      {helpOpen && (
+        <ErrorBoundary label="Ohje" action={{ label: "Sulje", run: () => setHelpOpen(false) }}>
+          <HelpModal onClose={() => setHelpOpen(false)} />
+        </ErrorBoundary>
+      )}
       {reportOpen && (
-        <ReportModal
-          exercises={exercises}
-          symptoms={symptoms}
-          logs={logs}
-          marks={marks}
-          psfs={psfs}
-          questions={questions}
-          setQuestions={onQuestions}
-          onClose={() => setReportOpen(false)}
-        />
+        <ErrorBoundary label="Raportti" action={{ label: "Sulje", run: () => setReportOpen(false) }}>
+          <ReportModal
+            exercises={exercises}
+            symptoms={symptoms}
+            logs={logs}
+            marks={marks}
+            psfs={psfs}
+            questions={questions}
+            setQuestions={onQuestions}
+            onClose={() => setReportOpen(false)}
+          />
+        </ErrorBoundary>
       )}
-      {importOpen && <ImportModal onApply={applyImport} onUndo={undoImport} canUndo={canUndoImport} onClose={() => setImportOpen(false)} />}
-      {stepsOpen && <StepsModal onApply={applySteps} onClose={() => setStepsOpen(false)} />}
+      {importOpen && (
+        <ErrorBoundary label="Tuonti" action={{ label: "Sulje", run: () => setImportOpen(false) }}>
+          <ImportModal onApply={applyImport} onUndo={undoImport} canUndo={canUndoImport} onClose={() => setImportOpen(false)} />
+        </ErrorBoundary>
+      )}
+      {stepsOpen && (
+        <ErrorBoundary label="Askeltuonti" action={{ label: "Sulje", run: () => setStepsOpen(false) }}>
+          <StepsModal onApply={applySteps} onClose={() => setStepsOpen(false)} />
+        </ErrorBoundary>
+      )}
     </div>
   );
 }

@@ -162,14 +162,20 @@ export function ImportModal({ onApply, onUndo, canUndo, onClose }) {
     setSaving(true);
     try {
       await onApply(preview);
+      setDone(true);
     } catch {
-      /* ignore */
+      /* the write is all-or-nothing, so a failure really did change nothing */
+      setError("Tuonti ei tallentunut. Tiedot jäivät ennalleen.");
     }
     setSaving(false);
-    setDone(true);
   };
-  const undo = () => {
-    onUndo && onUndo();
+  const undo = async () => {
+    const ok = onUndo ? await onUndo() : true;
+    if (ok === false) {
+      setDone(false);
+      setError("Kumoaminen ei onnistunut. Tiedot jäivät ennalleen.");
+      return;
+    }
     onClose();
   };
 

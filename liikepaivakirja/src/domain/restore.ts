@@ -72,6 +72,27 @@ export function snapshotToDataset(data: any) {
   };
 }
 
+/* The storage value for every DATA_KEYS entry, from the in-memory state shape
+   App holds. Import, restore, undo and the pre-restore snapshot all write
+   through this, so a key added to DATA_KEYS cannot be forgotten in one of them
+   without the round-trip test noticing. */
+export function datasetToValues(d: {
+  exercises?: any[];
+  symptoms?: any[];
+  logs?: Record<string, any>;
+  marks?: any[];
+  psfs?: any;
+  questions?: string;
+}): Record<(typeof DATA_KEYS)[number], any> {
+  return {
+    "physio-config": { exercises: d.exercises || [], symptoms: d.symptoms || [] },
+    "physio-logs": d.logs || {},
+    "physio-marks": d.marks || [],
+    "physio-psfs": d.psfs || { activities: [], entries: {} },
+    "physio-questions": d.questions || "",
+  };
+}
+
 export type Dataset = {
   ex?: any[];
   sy?: any[];
@@ -101,6 +122,20 @@ export function describeDataset(d: Dataset) {
   };
 }
 
+/* JSON with object keys sorted, so two equal values compare equal however
+   their objects were built up. */
+export function stableStringify(v: any): string {
+  if (Array.isArray(v)) return `[${v.map(stableStringify).join(",")}]`;
+  if (v && typeof v === "object") {
+    return `{${Object.keys(v)
+      .filter((k) => v[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableStringify(v[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+
 /* What applying `incoming` over `current` would change. Negative numbers are
    the ones that matter — those are entries that would stop existing. */
 export function diffDatasets(current: Dataset, incoming: Dataset) {
@@ -110,6 +145,20 @@ export function diffDatasets(current: Dataset, incoming: Dataset) {
   const incomingDays = new Set(Object.keys(incoming.logs || {}));
   const lostDays = [...currentDays].filter((k) => !incomingDays.has(k)).sort();
   const gainedDays = [...incomingDays].filter((k) => !currentDays.has(k)).sort();
+  /* days in both whose contents differ: a restore replaces them, so edits made
+     since the backup was taken are lost even though no day disappears */
+  const cl = current.logs || {};
+  const il = incoming.logs || {};
+  const changedDays = [...currentDays]
+    .filter((k) => incomingDays.has(k) && stableStringify(cl[k]) !== stableStringify(il[k]))
+    .sort();
+  const same = (a, b) => stableStringify(a) === stableStringify(b);
+  const otherChanged =
+    !same(current.ex || [], incoming.ex || []) ||
+    !same(current.sy || [], incoming.sy || []) ||
+    !same(current.marks || [], incoming.marks || []) ||
+    !same(current.psfs || null, incoming.psfs || null) ||
+    (current.questions || "") !== (incoming.questions || "");
 
   return {
     current: a,
@@ -126,14 +175,11 @@ export function diffDatasets(current: Dataset, incoming: Dataset) {
        swap of one day for another */
     lostDays,
     gainedDays,
-    /* nothing at all would change */
-    identical:
-      lostDays.length === 0 &&
-      gainedDays.length === 0 &&
-      b.exercises === a.exercises &&
-      b.symptoms === a.symptoms &&
-      b.marks === a.marks &&
-      b.psfs === a.psfs,
-    destructive: lostDays.length > 0 || b.marks < a.marks || b.psfs < a.psfs || b.exercises < a.exercises,
+    changedDays,
+    /* nothing at all would change — by content, not by counts: equal counts
+       and day keys can hide every entry of today being different */
+    identical: lostDays.length === 0 && gainedDays.length === 0 && changedDays.length === 0 && !otherChanged,
+    destructive:
+      lostDays.length > 0 || changedDays.length > 0 || b.marks < a.marks || b.psfs < a.psfs || b.exercises < a.exercises,
   };
 }

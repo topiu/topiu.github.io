@@ -99,6 +99,12 @@ export class ErrorBoundary extends Component<any, any> {
             style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, flex: 1, padding: "11px 12px", borderRadius: 11, border: "none", background: C.pine, color: "#fff", fontSize: 14.5, fontWeight: 600 }}>
             <RotateCcw size={15} /> Yritä uudelleen
           </button>
+          {this.props.action && (
+            <button className="tap" onClick={() => { this.reset(); this.props.action.run(); }}
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "0 0 auto", padding: "11px 13px", borderRadius: 11, border: `1px solid ${C.line}`, background: C.surface, color: C.ink, fontSize: 14.5, fontWeight: 600 }}>
+              {this.props.action.label}
+            </button>
+          )}
           <button className="tap" onClick={this.copy}
             style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, flex: "0 0 auto", padding: "11px 13px", borderRadius: 11, border: `1px solid ${C.line}`, background: C.surface, color: C.inkSoft, fontSize: 14.5, fontWeight: 600 }}>
             {copied ? <Check size={15} /> : <Copy size={15} />} {copied ? "Kopioitu" : "Kopioi"}
