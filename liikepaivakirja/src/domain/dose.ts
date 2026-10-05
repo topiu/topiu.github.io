@@ -77,5 +77,8 @@ export const doseSnapshotOf = (ex) => ({
 export const isEmptyLog = (l) => {
   const noMins = !l.mins || Object.values(l.mins).every((v) => !v);
   const noSets = (!l.sets || Object.values(l.sets).every((v) => !v)) && noMins;
-  return noSets && !l.steps && (!l.flared || !l.flared.length) && (!l.note || !l.note.trim());
+  /* pain recorded during an exercise keeps the day even with no sets logged:
+     stopping because it hurt is exactly what the physiotherapist needs to see */
+  const noPain = !l.pain || !Object.keys(l.pain).length;
+  return noSets && noPain && !l.steps && (!l.flared || !l.flared.length) && (!l.note || !l.note.trim());
 };

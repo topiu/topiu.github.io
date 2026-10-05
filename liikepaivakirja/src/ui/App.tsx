@@ -1,6 +1,6 @@
 /* ui/App — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { EMPTY_DOSE, FREQ_DAILY, LIB_BY_ID, addDays, datasetToValues, doseSnapshotOf, emptyLog, emptyPsfs, expectedSessions, freqLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizePsfs, normalizeSymptoms, psfsAddActivity, psfsForgetActivity, psfsRenameActivity, psfsRetireActivity, psfsSetScore, resetToDefaults, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid, usedIdsInLogs, weekProgress } from "../domain";
+import { EMPTY_DOSE, FREQ_DAILY, LIB_BY_ID, addDays, datasetToValues, doseSnapshotOf, clampRest, emptyLog, emptyPsfs, expectedSessions, freqLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizePsfs, normalizeSetEntry, normalizeSymptoms, psfsAddActivity, psfsForgetActivity, psfsRenameActivity, psfsRetireActivity, psfsSetScore, resetToDefaults, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid, usedIdsInLogs, weekProgress } from "../domain";
 import { flushSync } from "react-dom";
 import { hasStore, loadJSON, loadJSONStrict, onFlush, saveJSON, saveJSONDebounced, saveManyNow, subscribeWriteStatus } from "../storage/store";
 import { preRestoreSnapshot, prune as pruneSnapshots } from "../storage/backup";
@@ -15,6 +15,7 @@ import { FirstRunCard, HelpButton, HelpModal } from "./Help";
 import { useDaySwipe } from "./swipe";
 import { OfflineNote, OfflineSettings, UpdateBanner } from "./Update";
 import { TodayView } from "./Today";
+import { FocusView } from "./Focus";
 import { Style } from "./common";
 
 /* ================================================================== */
@@ -38,6 +39,11 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpDismissed, setHelpDismissed] = useState(false);
   const [programUndo, setProgramUndo] = useState<any>(null);
+  /* treenitila: which exercise it opened on (null = closed), and the rest length,
+     a device preference kept in physio-ui next to helpDismissed */
+  const [focus, setFocus] = useState<any>(null);
+  const [restSec, setRestSec] = useState(clampRest(undefined));
+  const uiRef = useRef<any>({});
   const undoTimer = useRef<any>(null);
 
   /* The calendar moves on while the app stays open (a Home Screen app resumed
@@ -124,6 +130,8 @@ export default function App() {
       setQuestions(typeof q === "string" ? q : "");
       const ui = await loadJSON("physio-ui", null);
       setHelpDismissed(!!(ui && ui.helpDismissed));
+      uiRef.current = ui && typeof ui === "object" ? ui : {};
+      setRestSec(clampRest(uiRef.current.restSec));
       const undo = await loadJSON("physio-undo", null);
       if (undo && Array.isArray(undo.exercises)) {
         undoRef.current = undo;
@@ -280,10 +288,23 @@ export default function App() {
     canNext: !isToday,
   });
 
+  /* physio-ui holds several device preferences: always write the merged object */
+  const saveUi = useCallback((patch) => {
+    uiRef.current = { ...uiRef.current, ...patch };
+    saveJSON("physio-ui", uiRef.current);
+  }, []);
   const dismissHelp = useCallback(() => {
     setHelpDismissed(true);
-    saveJSON("physio-ui", { helpDismissed: true });
-  }, []);
+    saveUi({ helpDismissed: true });
+  }, [saveUi]);
+  const changeRest = useCallback(
+    (s) => {
+      const v = clampRest(s);
+      setRestSec(v);
+      saveUi({ restSec: v });
+    },
+    [saveUi]
+  );
 
   /* ---- questions for the appointment: free text, debounced like the note ---- */
   const onQuestions = useCallback((v) => {
@@ -304,8 +325,13 @@ export default function App() {
         quality: { ...(src.quality || {}) },
         note: src.note || "",
         steps: src.steps || 0,
+        detail: { ...(src.detail || {}) },
+        pain: { ...(src.pain || {}) },
       };
       const next = mutate(cur) || cur;
+      /* only days that used treenitila carry these, as normalizeLogs writes them */
+      if (next.detail && !Object.keys(next.detail).length) delete next.detail;
+      if (next.pain && !Object.keys(next.pain).length) delete next.pain;
       const map = { ...prev };
       if (isEmptyLog(next)) delete map[key];
       else map[key] = next;
@@ -331,8 +357,65 @@ export default function App() {
       }
       l.sets = map;
       l.goal = g;
+      /* per-set detail never outnumbers the sets: lowering the count drops the
+         latest recorded sets */
+      const det = l.detail[id];
+      if (det && det.length > Math.max(0, n)) {
+        l.detail = { ...l.detail };
+        if (n > 0) l.detail[id] = det.slice(0, n);
+        else delete l.detail[id];
+      }
       return l;
     });
+
+  /* ---- treenitila writes: each set is a discrete action, written at once ---- */
+  const logGymSet = useCallback(
+    (id, entry) =>
+      updateLog(selKey, (l) => {
+        const prev = l.detail[id] || [];
+        const n = Math.max(l.sets[id] || 0, prev.length) + 1;
+        l.detail = { ...l.detail, [id]: [...prev, normalizeSetEntry(entry)] };
+        l.sets = { ...l.sets, [id]: n };
+        if (!l.goal[id]) {
+          const ex = exercises.find((e) => e.id === id);
+          l.goal = { ...l.goal, [id]: ex ? doseSnapshotOf(ex) : { sets: 1, reps: null, hold: null, min: null, freq: FREQ_DAILY } };
+        }
+        return l;
+      }),
+    [selKey, updateLog, exercises]
+  );
+  const removeGymSet = useCallback(
+    (id, i) =>
+      updateLog(selKey, (l) => {
+        const prev = l.detail[id] || [];
+        if (i < 0 || i >= prev.length) return l;
+        const rest = prev.filter((_, k) => k !== i);
+        const n = Math.max(0, (l.sets[id] || 0) - 1);
+        l.detail = { ...l.detail };
+        if (rest.length) l.detail[id] = rest;
+        else delete l.detail[id];
+        l.sets = { ...l.sets };
+        if (n > 0) l.sets[id] = n;
+        else {
+          delete l.sets[id];
+          l.goal = { ...l.goal };
+          delete l.goal[id];
+        }
+        return l;
+      }),
+    [selKey, updateLog]
+  );
+  /* pain during an exercise: the same value again clears it */
+  const setExercisePain = useCallback(
+    (id, v) =>
+      updateLog(selKey, (l) => {
+        l.pain = { ...l.pain };
+        if (l.pain[id] === v) delete l.pain[id];
+        else l.pain[id] = v;
+        return l;
+      }),
+    [selKey, updateLog]
+  );
 
   const setExerciseMins = (id, m) =>
     updateLog(selKey, (l) => {
@@ -877,6 +960,7 @@ export default function App() {
             psfsForget={psfsForget}
             logs={logs}
             completeProgram={completeProgram}
+            openFocus={(id) => setFocus({ startId: id })}
             programUndo={programUndo}
             undoProgram={undoProgram}
           />
@@ -992,6 +1076,24 @@ export default function App() {
       {importOpen && (
         <ErrorBoundary label="Tuonti" action={{ label: "Sulje", run: () => setImportOpen(false) }}>
           <ImportModal onApply={applyImport} onUndo={undoImport} canUndo={canUndoImport} onClose={() => setImportOpen(false)} />
+        </ErrorBoundary>
+      )}
+      {focus && (
+        <ErrorBoundary label="Treenitila" action={{ label: "Sulje", run: () => setFocus(null) }}>
+          <FocusView
+            exercises={activeExercises}
+            logs={logs}
+            dateKey={selKey}
+            todayKey={keyOf(today)}
+            startId={focus.startId}
+            restSec={restSec}
+            onRestSec={changeRest}
+            onLogSet={logGymSet}
+            onRemoveSet={removeGymSet}
+            onSetMins={setExerciseMins}
+            onPain={setExercisePain}
+            onClose={() => setFocus(null)}
+          />
         </ErrorBoundary>
       )}
       {stepsOpen && (

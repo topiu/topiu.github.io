@@ -1,6 +1,6 @@
 /* ui/Today — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useEffect, useRef } from "react";
-import { ChevronLeft, ChevronRight, Check, CheckCheck, Plus, Minus, X, Zap, HelpCircle, RotateCcw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, CheckCheck, Dumbbell, Plus, Minus, X, Zap, HelpCircle, RotateCcw } from "lucide-react";
 import { FREQ_DAILY, QUALITIES, SEVERITY, WD_LONG, addDays, dayDoseOf, doseLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isMin, weekProgress } from "../domain";
 import { PsfsCard } from "./Psfs";
 import { C } from "../styles/tokens";
@@ -39,6 +39,7 @@ export function TodayView({
   psfsForget,
   logs,
   completeProgram,
+  openFocus,
   programUndo,
   undoProgram,
 }) {
@@ -77,8 +78,23 @@ export function TodayView({
         </div>
       </Card>
 
-      {/* Exercises */}
-      <SectionLabel>Liikkeet</SectionLabel>
+      {/* Exercises. The treenitila entry shares the section label's line, so it
+          costs Tänään no vertical space. It opens on the first exercise not yet
+          done. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <SectionLabel>Liikkeet</SectionLabel>
+        {exercises.length > 0 && openFocus && (
+          <button
+            className="tap"
+            onClick={() => {
+              const next = exercises.find((e) => !isCompleteOn(log, e)) || exercises[0];
+              openFocus(next.id);
+            }}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, margin: "0 2px 9px", padding: "6px 12px", borderRadius: 999, border: `1px solid ${C.pine}`, background: C.surface, color: C.pineDeep, fontSize: 13, fontWeight: 600 }}>
+            <Dumbbell size={15} /> Treenitila
+          </button>
+        )}
+      </div>
       <ProgramButton
         exercises={exercises}
         logs={logs}

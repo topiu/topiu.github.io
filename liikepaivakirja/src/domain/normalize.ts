@@ -5,6 +5,7 @@ import { FREQ_DAILY, freqOf } from "./freq";
 import { SOURCES } from "./library";
 import { toNum, uid } from "./num";
 import { normalizePsfs } from "./psfs";
+import { normalizeDetail, normalizePain } from "./gym";
 import { REGION_BY_ID } from "./regions";
 import { STRUCT_BY_ID } from "./structures";
 import { EX_TYPE_IDS, QUALITY_IDS } from "./taxonomy";
@@ -180,7 +181,13 @@ export function normalizeLogs(raw, exById) {
       });
     }
     const steps = Math.max(0, Math.min(parseInt(l.steps, 10) || 0, 200000));
-    const norm = { sets, goal, mins, flared, severity, quality, note, steps };
+    const norm: any = { sets, goal, mins, flared, severity, quality, note, steps };
+    /* treenitila: per-set detail and pain during an exercise. Present only when
+       there is something in them, so days that never used it keep their shape. */
+    const detail = normalizeDetail(l.detail, sets);
+    if (Object.keys(detail).length) norm.detail = detail;
+    const pain = normalizePain(l.pain);
+    if (Object.keys(pain).length) norm.pain = pain;
     if (!isEmptyLog(norm)) out[k] = norm;
   });
   return out;

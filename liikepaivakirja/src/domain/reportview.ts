@@ -36,6 +36,26 @@ const shortKey = (k) => {
 
 const signed = (n) => (n > 0 ? `+${n}` : String(n));
 
+/* "kuorma 12 → 16 kg (käsipainot) · kipu liikkeen aikana ka 2,3, korkein 5 (6 krt)" */
+const kgTxt = (v) => String(v).replace(".", ",");
+function gymLine(e) {
+  const parts = [];
+  if (e.load) {
+    const eq = e.load.equipment.length ? ` (${e.load.equipment.join(", ").toLowerCase()})` : "";
+    if (e.load.first && e.load.last && e.load.first.date !== e.load.last.date) {
+      parts.push(`kuorma ${kgTxt(e.load.first.top)} → ${kgTxt(e.load.last.top)} kg${eq}`);
+    } else if (e.load.max) {
+      parts.push(`kuorma ${kgTxt(e.load.max)} kg${eq}`);
+    } else if (eq) {
+      parts.push(`väline${eq}`);
+    }
+  }
+  if (e.pain) {
+    parts.push(`kipu liikkeen aikana ka ${kgTxt(e.pain.mean)}, korkein ${e.pain.max} (${e.pain.n} krt)`);
+  }
+  return parts.join(" · ");
+}
+
 export const reportCSS = `
 .rpt { --ink:#111; --soft:#555; --faint:#777; --rule:#c9cfcc; --band:#f2f5f3;
   color:var(--ink); background:#fff; font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -103,7 +123,7 @@ function exerciseTable(m) {
       return `<tr>
         <td>${esc(e.name)}${presc ? `<div class="sub">${esc(presc)}</div>` : ""}${
         e.since ? `<div class="sub">mukana ${esc(shortKey(e.since))} alkaen</div>` : ""
-      }</td>
+      }${gymLine(e) ? `<div class="sub">${esc(gymLine(e))}</div>` : ""}</td>
         <td class="n">${bar}${e.completePct == null ? "–" : `${e.completePct} %`}</td>
         <td class="n">${e.daysComplete}/${e.target}</td>
         <td class="n">${e.unitsDone}/${e.unitsGoal} ${esc(unit)}</td>
@@ -342,6 +362,7 @@ export function reportText(m, opts = {} as any) {
     const d = e.dose ? ` (${e.dose})` : "";
     const f = e.freq < FREQ_DAILY ? `, ${e.freqText}` : "";
     L.push(`- ${e.name}${d}${f}: ${e.completePct == null ? "–" : e.completePct + " %"}, ${e.daysComplete}/${e.target} kertaa${e.over ? `, yli annoksen ${e.over} pv` : ""}`);
+    if (gymLine(e)) L.push(`  ${gymLine(e)}`);
   });
 
   L.push("");

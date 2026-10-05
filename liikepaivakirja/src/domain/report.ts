@@ -34,6 +34,7 @@ import { doseLabel, goalMinOf, goalOf, isCompleteOn, isMin } from "./dose";
 import { FREQ_DAILY, creditedSessions, expectedSessions, freqLabel, freqOf } from "./freq";
 import { DATE_RE } from "./dates";
 import { psfsActivityChanges, psfsChange, psfsSeries } from "./psfs";
+import { loadSummary, painSummary } from "./gym";
 import { SEVERITY, qualityLabel } from "./taxonomy";
 
 const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : null);
@@ -125,6 +126,9 @@ export function buildReport({ exercises = [], symptoms = [], logs = {}, marks = 
       daysComplete,
       credited,
       completePct: pct(daysComplete, target),
+      /* treenitila facts: loads lifted and pain during the exercise, if recorded */
+      load: loadSummary(logs, ex.id, keys),
+      pain: painSummary(logs, ex.id, keys),
       over,
       unitsDone,
       unitsGoal,

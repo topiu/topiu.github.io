@@ -55,7 +55,7 @@ editing instead.
 
 ```
 npm ci                                   # match the lockfile, as CI does
-npm test                                 # vitest, ~210 tests
+npm test                                 # vitest, ~230 tests
 npm run typecheck                        # tsc --noEmit — see caveat below
 BASE_PATH=/liikepaivakirja/ npm run build   # what the deploy runs
 npm run build:single                     # one self-contained .html, no worker
@@ -79,13 +79,14 @@ pristine clone before and after a change, and keep it from growing.
 
 ```
 src/domain/    pure logic — no React, no platform APIs, heavily tested
-               backup dates defaults dose exportfmt freq help library
+               backup dates defaults dose exportfmt freq gym help library
                load normalize num psfs regions report reportview restore
                steps structures swipe taxonomy      (+ index.ts barrel)
 src/storage/   store.ts (IndexedDB + async bridge), backup.ts (snapshots),
                backupState.ts, fsbackup.ts
-src/platform/  download.ts share.ts sw.ts        (browser capability wrappers)
-src/ui/        App Today History Edit Modals Library BodyMap common
+src/platform/  download.ts share.ts sw.ts sound.ts wakelock.ts
+                                                 (browser capability wrappers)
+src/ui/        App Today Focus History Edit Modals Library BodyMap common
                Backup Help Psfs Report Restore Update  swipe.ts (hook)
                ErrorBoundary (one per tab, per modal and per day)
 tests/         mirrors domain/ plus mount tests
@@ -229,6 +230,10 @@ programme that has 5–10-set exercises, weekly badges and long Finnish names:
 Playwright and Chromium are preinstalled in the Claude sandbox (seed IndexedDB
 from a same-origin static file such as `manifest.webmanifest` before the app
 loads, or its first-run seed overwrites yours).
+
+**`Number(null)` is `0`.** A normaliser that does `Number(v)` turns "not
+recorded" into zero; a mount test caught hold sets being stored with `reps: 0`,
+which reads "0 × …", before it shipped. Check `v == null` before converting.
 
 **Watch for `-0`.** `Math.abs`/sign arithmetic returning `-0` puts `-0px` into a
 transform. Guard the zero case.

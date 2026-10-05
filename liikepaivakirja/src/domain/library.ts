@@ -43,6 +43,7 @@ export const LIB_CATS = [
   { id: "w_chest", label: "Vapaat painot · rinta" },
   { id: "w_sh", label: "Vapaat painot · olkapäät" },
   { id: "w_arms", label: "Vapaat painot · kädet" },
+  { id: "kb", label: "Kahvakuula" },
   { id: "bw", label: "Kehonpaino" },
   { id: "cardio", label: "Kestävyys" },
 ];
@@ -196,6 +197,18 @@ export const LIBRARY = [
   L("skullcrusher", "Ranskalainen punnerrus", "w_arms", "strength", { triceps: 1 }, { src: "anatomy" }),
   L("overhead_triceps", "Ojentajan punnerrus pään takaa", "w_arms", "strength", { triceps: 1, shoulder_front: 3 }, { src: "anatomy" }),
   L("wrist_curl", "Ranteen koukistus", "w_arms", "strength", { forearm: 1 }, { src: "anatomy" }),
+
+  /* ---------------- kettlebell ---------------- */
+  L("kb_swing", "Kahvakuulaheilautus", "kb", "strength", { glute_max: 1, hamstring: 1, lumbar: 2, core_deep: 2, forearm: 3 }, { src: "anatomy", structures: ["j_hip"] }),
+  L("kb_goblet_squat", "Goblet-kyykky kahvakuulalla", "kb", "strength", { quad: 1, glute_max: 1, adductor: 2, core_deep: 2 }, { src: "anatomy", structures: ["j_knee", "j_hip"] }),
+  L("kb_deadlift", "Kahvakuulamaastaveto", "kb", "strength", { glute_max: 1, hamstring: 1, lumbar: 2, quad: 2, forearm: 3 }, { src: "anatomy", structures: ["j_hip"] }),
+  L("kb_suitcase_deadlift", "Matkalaukkumaastaveto kahvakuulalla", "kb", "strength", { obliques: 1, glute_max: 1, hamstring: 2, quad: 2, forearm: 2 }, { src: "anatomy" }),
+  L("kb_row", "Yhden käden soutu kahvakuulalla", "kb", "strength", { lat: 1, trap_lower: 2, shoulder_rear: 2, biceps: 2 }, { src: "anatomy" }),
+  L("kb_press", "Pystypunnerrus kahvakuulalla", "kb", "strength", { shoulder_front: 1, triceps: 2, trap_upper: 2, core_deep: 3 }, { src: "anatomy", structures: ["j_shoulder"] }),
+  L("kb_clean", "Rinnalleveto kahvakuulalla", "kb", "strength", { glute_max: 1, hamstring: 1, trap_upper: 2, forearm: 2, biceps: 3 }, { src: "anatomy" }),
+  L("kb_tgu", "Turkkilainen nousu kahvakuulalla", "kb", "stability", { shoulder_front: 1, core_deep: 1, obliques: 2, glute_max: 2, trap_lower: 2, quad: 3 }, { src: "anatomy", structures: ["j_shoulder"] }),
+  L("kb_halo", "Halo kahvakuulalla", "kb", "mobility", { shoulder_front: 1, shoulder_rear: 2, trap_upper: 2, core_deep: 3 }, { src: "anatomy", structures: ["j_shoulder"] }),
+  L("kb_floor_press", "Lattiapunnerrus kahvakuulalla", "kb", "strength", { chest: 1, triceps: 1, shoulder_front: 2 }, { src: "anatomy" }),
 
   /* ---------------- bodyweight ---------------- */
   L("bw_squat", "Kyykky ilman lisäpainoa", "bw", "strength", { quad: 1, glute_max: 2, adductor: 3 }, { src: "anatomy" }),

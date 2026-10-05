@@ -2,6 +2,7 @@
 import { humanDate } from "./dates";
 import { doseLabel, emptyLog, goalOf } from "./dose";
 import { psfsEntry, psfsMean } from "./psfs";
+import { setLabel } from "./gym";
 import { SEVERITY, qualityLabel } from "./taxonomy";
 
 /* ------------------------------------------------------------------ */
@@ -28,6 +29,8 @@ export function buildCSV(exercises, symptoms, logs, marks, psfs) {
     ...psfsCols.map((a) => `PSFS: ${a.name}`),
     ...(psfsCols.length ? ["PSFS keskiarvo"] : []),
     "Askeleet",
+    "Sarjat",
+    "Kipu liikkeen aikana (0–10)",
     "Muistiinpano",
     "Merkkipaalut",
   ];
@@ -70,6 +73,14 @@ export function buildCSV(exercises, symptoms, logs, marks, psfs) {
       ...ps,
       ...(psfsCols.length ? [pm ? pm.mean : ""] : []),
       l.steps || "",
+      exercises
+        .filter((e) => l.detail && l.detail[e.id] && l.detail[e.id].length)
+        .map((e) => `${e.name}: ${l.detail[e.id].map(setLabel).join(", ")}`)
+        .join(" | "),
+      exercises
+        .filter((e) => l.pain && typeof l.pain[e.id] === "number")
+        .map((e) => `${e.name} ${l.pain[e.id]}`)
+        .join(" | "),
       (l.note || "").replace(/\r?\n/g, " "),
       (marksByDate[k] || []).join(" | "),
     ]);
@@ -77,7 +88,8 @@ export function buildCSV(exercises, symptoms, logs, marks, psfs) {
   return "\uFEFF" + lines.map((r) => r.map(esc).join(SEP)).join("\r\n");
 }
 
-/* version 8 added `psfs`, version 9 adds `questions`. Older files import cleanly
+/* version 8 added `psfs`, version 9 adds `questions`, version 10 adds per-set
+   `detail` and `pain` inside each day's log (treenitila). Older files import cleanly
    — parseImport normalizes a missing key to an empty value — and a newer file
    read by an older build simply ignores the extra field, so both directions stay
    safe. The rule that produced version 9: every key in DATA_KEYS must appear
@@ -87,7 +99,7 @@ export function buildJSON(exercises, symptoms, logs, marks, psfs, questions?) {
     {
       app: "Liikepäiväkirja",
       exportedAt: new Date().toISOString(),
-      version: 9,
+      version: 10,
       exercises,
       symptoms,
       logs,

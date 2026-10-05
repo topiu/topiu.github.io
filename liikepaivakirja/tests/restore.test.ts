@@ -169,7 +169,7 @@ describe("export/import round trip", () => {
       "Kysymys vastaanotolle?"
     );
     const parsed: any = JSON.parse(json);
-    expect(parsed.version).toBe(9);
+    expect(parsed.version).toBe(10);
     /* the invariant behind version 9: no key in DATA_KEYS may be absent here */
     const covered = { "physio-config": "exercises", "physio-logs": "logs", "physio-marks": "marks", "physio-psfs": "psfs", "physio-questions": "questions" };
     DATA_KEYS.forEach((k) => expect(parsed[covered[k]]).toBeDefined());

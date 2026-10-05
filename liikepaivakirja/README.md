@@ -315,6 +315,49 @@ A bulk write gets an undo: the exact log object from before the fill is held for
 nine seconds and restored wholesale, rather than trying to subtract what was
 added.
 
+## Treenitila
+
+A full-screen, one-exercise-at-a-time mode for the gym, opened from the
+**Treenitila** button on the Liikkeet line of Tänään (it shares that line, so
+the daily screen gets no taller). It opens on the first exercise not yet done;
+swipe or the arrows move between exercises.
+
+- **What was actually done, per set.** Reps (or a hold in seconds), the load
+  and the equipment: oma paino, käsipainot, kahvakuula, tanko, laite / talja or
+  kuminauha. Loads step the way the equipment does — dumbbells by 1 kg, bars and
+  machines by 2.5 kg, **kettlebells along the standard sizes** (4, 6, 8 … 24,
+  28, 32 … 48 kg), bands by level. Each set starts from the set just done, else
+  from the last session *with the same equipment* — 40 kg on a bar says nothing
+  about which dumbbell to pick up — else from the prescription.
+- **Rest 60 s** starts by itself after every set; ±15 s adjusts it and the
+  length is remembered as a device preference (`physio-ui`, not diary data).
+  Hold exercises get a hold countdown that logs the set when it ends. The
+  screen is kept awake where the browser allows it, with a short beep at the
+  end (iOS: the ringer switch can mute it; the countdown is the real signal).
+- **Pain during the exercise, 0–10**, optional, one tap; the same tap clears
+  it. This is the "pain during" the physiotherapist asks about, recorded as
+  given. A day with only pain recorded is kept — stopping because it hurt is the
+  record.
+
+Design rules it keeps:
+
+- **"Done" does not change.** `sets[id]` is still the count and still the only
+  input to `isCompleteOn`; the per-set `detail` is information *about* those
+  sets, and never outnumbers them (lowering the count on Tänään drops the latest
+  recorded sets; the one-tap fill adds sets with no detail). Doing 4 × 8 instead
+  of 3 × 10 is recorded as exactly that, and the report shows it.
+- **Detail and pain live inside the day's log**, so they travel with
+  `physio-logs` through export (JSON version 10), snapshots and restore with no
+  new storage key. `normalizeLogs` keeps them — a field it does not know is a
+  field a reload deletes.
+- **No advice.** It shows what was done last time, never "add 2.5 kg". The
+  report states loads as numbers ("kuorma 32,5 → 40 kg (tanko)") and pain as a
+  mean and maximum, with no arrows.
+
+Deliberately not built: left/right sides (not used), equipment profiles per
+place (per-set equipment covers "whatever is free today"), automatic
+progression and records.
+
 ## Oireen kirjaus yhdellä napautuksella
 
 The three severity buttons are the **primary** control, sitting on the symptom's
