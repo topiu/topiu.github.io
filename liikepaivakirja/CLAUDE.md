@@ -222,6 +222,14 @@ that regenerates ids — a reset to defaults, a re-seed — detaches every logge
 session from its exercise. `resetToDefaults` keeps matching ids and archives
 items with history instead of dropping them.
 
+**jsdom has no layout, so overlap passes every test.** The set balls ran under
+exercise names on phones for months with the suite green. After touching a
+Tänään row, look at it in a real browser at 320, 375, 390 and 430 px with a
+programme that has 5–10-set exercises, weekly badges and long Finnish names:
+Playwright and Chromium are preinstalled in the Claude sandbox (seed IndexedDB
+from a same-origin static file such as `manifest.webmanifest` before the app
+loads, or its first-run seed overwrites yours).
+
 **Watch for `-0`.** `Math.abs`/sign arithmetic returning `-0` puts `-0px` into a
 transform. Guard the zero case.
 

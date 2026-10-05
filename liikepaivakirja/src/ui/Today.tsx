@@ -308,13 +308,22 @@ export function ExerciseRow({ ex, completed, dayGoal, dayDose, minutes, goalMin,
   const stale = done > 0 && dayLabel !== label; // logged under a different dose than the current one
   const hasDesc = ex.desc && ex.desc.trim();
 
+  /* Layout: [check] [name + dose] [tracker]. The tracker is as wide as the
+     prescription — six set balls are ~160px — so on a phone the name used to be
+     squeezed until its longest word and the weekly badge spilled out underneath
+     the balls. The row now wraps instead: the name block asks for its natural
+     width (capped so it always stays beside the check), and when name and
+     tracker do not both fit, the tracker drops to its own line, right-aligned
+     like every other tracker. A row that fits stays one line. */
   return (
     <div
       style={{
         position: "relative",
         display: "flex",
+        flexWrap: "wrap",
         alignItems: "center",
-        gap: 13,
+        columnGap: 13,
+        rowGap: 6,
         padding: "12px",
         borderRadius: 11,
         background: complete ? C.pineTint : "transparent",
@@ -334,17 +343,10 @@ export function ExerciseRow({ ex, completed, dayGoal, dayDose, minutes, goalMin,
       <button
         className="tap"
         onClick={() => (minute ? onMin(complete && !over ? 0 : target) : onSet(complete && !over ? 0 : target))}
-        style={{ flex: 1, minWidth: 0, textAlign: "left", background: "transparent" }}
+        style={{ flex: "1 1 auto", minWidth: 0, maxWidth: "calc(100% - 39px)", textAlign: "left", background: "transparent" }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 15.5, fontWeight: 500, color: complete ? C.pineDeep : C.ink }}>{ex.name}</span>
-          {week && (
-            <span
-              title={`Tavoite ${week.target}× viikossa`}
-              style={{ marginLeft: 7, fontSize: 11.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", padding: "1px 6px", borderRadius: 6, whiteSpace: "nowrap", color: week.met ? C.pineDeep : C.inkSoft, background: week.met ? C.pineTint : C.surfaceSoft, border: `1px solid ${week.met ? C.pineSoft : C.line}` }}>
-              {week.done}/{week.target} vk
-            </span>
-          )}
+          <span style={{ minWidth: 0, overflowWrap: "anywhere", fontSize: 15.5, fontWeight: 500, color: complete ? C.pineDeep : C.ink }}>{ex.name}</span>
           {hasDesc && (
             <span
               role="button"
@@ -358,19 +360,30 @@ export function ExerciseRow({ ex, completed, dayGoal, dayDose, minutes, goalMin,
             </span>
           )}
         </div>
-        {(label || stale) && (
+        {(label || stale || week) && (
           <div style={{ fontSize: 12.5, color: C.inkFaint, marginTop: 1 }}>
             {label}
+            {/* the weekly counter describes the prescription, so it sits with
+                the dose rather than competing with the name for width */}
+            {week && (
+              <span
+                title={`Tavoite ${week.target}× viikossa`}
+                style={{ display: "inline-block", marginLeft: label ? 7 : 0, fontSize: 11.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", padding: "0 6px", borderRadius: 6, whiteSpace: "nowrap", color: week.met ? C.pineDeep : C.inkSoft, background: week.met ? C.pineTint : C.surfaceSoft, border: `1px solid ${week.met ? C.pineSoft : C.line}` }}>
+                {week.done}/{week.target} vk
+              </span>
+            )}
             {stale && <span> · kirjattu annoksella {dayLabel || `${dayGoal} ${dayGoal === 1 ? "sarja" : "sarjaa"}`}</span>}
           </div>
         )}
       </button>
 
-      {minute ? (
-        <MinuteTracker target={target} minutes={minutes} onMin={onMin} />
-      ) : (
-        <SetTracker target={target} completed={completed} onSet={onSet} />
-      )}
+      <div style={{ flex: "0 0 auto", marginLeft: "auto" }}>
+        {minute ? (
+          <MinuteTracker target={target} minutes={minutes} onMin={onMin} />
+        ) : (
+          <SetTracker target={target} completed={completed} onSet={onSet} />
+        )}
+      </div>
 
       {showHelp && hasDesc && (
         <>
