@@ -284,10 +284,14 @@ In order:
 
 1. **BUILD_ID** under Muokkaa → Offline ja versio. If it is not the deploy just
    run, the deploy did not land and nothing in the app is at fault.
-2. **Settings → Pages → Source** must say GitHub Actions.
+2. **Settings → Pages → Source** must say GitHub Actions. Nothing in the
+   workflow sets it — `configure-pages` does not — and while it says "Deploy from
+   a branch", a *pages build and deployment* run races our Deploy on every push
+   and can publish the raw branch over a green deploy. That took the site down on
+   2026-10-06.
 3. The latest Deploy run: green, not cancelled, not failed.
 
-The workflow now runs `configure-pages` *before* the build, uses
+The workflow runs `configure-pages` *before* the build, uses
 `cancel-in-progress: false`, and verifies that every asset an `index.html`
 references exists in the artifact. Uploading a zip through the web UI is itself a
 push and starts a deploy; let it finish before dispatching another.
