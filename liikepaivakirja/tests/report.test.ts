@@ -225,7 +225,7 @@ describe("report symptoms and marks", () => {
       exercises: [],
       logs: {},
       marks: [
-        { id: "1", date: "2026-07-27", text: "Annos: Loitonnus: 2 × 10 → 3 × 10", auto: true },
+        { id: "1", date: "2026-07-27", text: "Tavoite: Loitonnus: 2 × 10 → 3 × 10", auto: true },
         { id: "2", date: "2026-07-27", text: "Ensimmäinen kipuvapaa lenkki", auto: false },
         { id: "3", date: "2026-01-01", text: "Kauan sitten", auto: false },
       ],

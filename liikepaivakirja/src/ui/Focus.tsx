@@ -11,7 +11,7 @@
  * involved because this renders outside the day pane.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Minus, Plus, X, Timer } from "lucide-react";
+import { ChevronLeft, ChevronRight, Minus, Plus, PlayCircle, X, Timer } from "lucide-react";
 import {
   BAND_LEVELS,
   EQUIPMENT,
@@ -199,12 +199,18 @@ export function FocusView({ exercises, logs, dateKey, todayKey, startId, restSec
         <h2 style={{ margin: "4px 0 2px", fontSize: 25, lineHeight: 1.2, fontWeight: 600, letterSpacing: "-0.01em", overflowWrap: "anywhere", color: done ? C.pineDeep : C.ink }}>
           {ex.name}
         </h2>
-        <div style={{ fontSize: 14, color: C.inkSoft }}>Ohje: {presc}</div>
+        <div style={{ fontSize: 14, color: C.inkSoft }}>Tavoite: {presc}</div>
         {last && (
           <div style={{ fontSize: 13, color: C.inkSoft, marginTop: 4, lineHeight: 1.45 }}>
             Viimeksi {shortDate(parseKey(last.date))}: {last.sets.map(setLabel).join(", ")}
             {last.sets[0] && last.sets[0].eq ? ` · ${equipLabel(last.sets[0].eq)}` : ""}
           </div>
+        )}
+        {ex.video && /^https?:\/\//i.test(ex.video) && (
+          <a href={ex.video} target="_blank" rel="noopener noreferrer"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 13.5, fontWeight: 600, color: C.pineDeep }}>
+            <PlayCircle size={16} /> Katso video
+          </a>
         )}
         {ex.desc && ex.desc.trim() && (
           <details style={{ marginTop: 8 }}>

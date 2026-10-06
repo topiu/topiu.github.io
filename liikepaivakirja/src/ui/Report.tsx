@@ -23,16 +23,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Copy, Download, Printer, X } from "lucide-react";
-import { buildReport, keyOf, reportBodyHTML, reportCSS, reportDocument, reportText, startOfToday } from "../domain";
+import { buildReport, keyOf, phaseDays, reportBodyHTML, reportCSS, reportDocument, reportText, startOfToday } from "../domain";
 import { copyText, download } from "../platform/download";
 import { C } from "../styles/tokens";
 import { IconBtn } from "./common";
 
-const RANGES = [
-  [30, "30 pv"],
-  [90, "90 pv"],
-  [0, "Kaikki"],
-] as const;
 
 const printCSS = `
 @media print {
@@ -46,7 +41,16 @@ const printCSS = `
 `;
 
 export function ReportModal({ exercises, symptoms, logs, marks, psfs, questions, setQuestions, onClose }) {
-  const [days, setDays] = useState(30);
+  /* "Tämä vaihe" appears once a phase has been started (Muokkaa → Uusi vaihe) */
+  const phase = useMemo(() => phaseDays(marks, keyOf(startOfToday())), [marks]);
+  const ranges: [string, number, string][] = [
+    ["30", 30, "30 pv"],
+    ["90", 90, "90 pv"],
+    ...(phase ? ([["phase", phase, "Tämä vaihe"]] as [string, number, string][]) : []),
+    ["all", 0, "Kaikki"],
+  ];
+  const [rangeId, setRangeId] = useState("30");
+  const days = (ranges.find((r) => r[0] === rangeId) || ranges[0])[1];
   const [msg, setMsg] = useState("");
 
   const model = useMemo(
@@ -104,13 +108,13 @@ export function ReportModal({ exercises, symptoms, logs, marks, psfs, questions,
             </IconBtn>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, background: C.surfaceSoft, border: `1px solid ${C.line}`, borderRadius: 11, padding: 4, marginTop: 10 }}>
-            {RANGES.map(([v, label]) => (
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${ranges.length}, 1fr)`, gap: 4, background: C.surfaceSoft, border: `1px solid ${C.line}`, borderRadius: 11, padding: 4, marginTop: 10 }}>
+            {ranges.map(([id, , label]) => (
               <button
-                key={v}
+                key={id}
                 className="tap"
-                onClick={() => setDays(v)}
-                style={{ padding: "8px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, color: days === v ? "#fff" : C.inkSoft, background: days === v ? C.pine : "transparent" }}
+                onClick={() => setRangeId(id)}
+                style={{ padding: "8px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, color: rangeId === id ? "#fff" : C.inkSoft, background: rangeId === id ? C.pine : "transparent" }}
               >
                 {label}
               </button>

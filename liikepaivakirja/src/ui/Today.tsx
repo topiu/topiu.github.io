@@ -1,7 +1,7 @@
 /* ui/Today — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useEffect, useRef } from "react";
 import { ChevronLeft, ChevronRight, Check, CheckCheck, Dumbbell, Plus, Minus, X, Zap, HelpCircle, RotateCcw } from "lucide-react";
-import { FREQ_DAILY, QUALITIES, SEVERITY, WD_LONG, addDays, dayDoseOf, doseLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isMin, weekProgress } from "../domain";
+import { FREQ_DAILY, PAIN_MAX, QUALITIES, SEVERITY, WD_LONG, addDays, askMorning, dayDoseOf, doseLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isMin, weekProgress } from "../domain";
 import { PsfsCard } from "./Psfs";
 import { C } from "../styles/tokens";
 import { Card, Empty, IconBtn, MiniBtn, SectionLabel } from "./common";
@@ -40,6 +40,7 @@ export function TodayView({
   logs,
   completeProgram,
   openFocus,
+  setMorning,
   programUndo,
   undoProgram,
 }) {
@@ -122,6 +123,11 @@ export function TodayView({
           />
         ))}
       </Card>
+
+      {/* Next-morning pain: only on a morning after training (or once answered) */}
+      {setMorning && askMorning(logs, dateKey) && (
+        <MorningPain value={log.morning} onSet={setMorning} />
+      )}
 
       {/* Symptoms */}
       <SectionLabel>Oireet</SectionLabel>
@@ -227,7 +233,7 @@ export function TodayView({
       {/* Milestones */}
       <SectionLabel>Merkkipaalut</SectionLabel>
       <div style={{ fontSize: 12.5, color: C.inkSoft, margin: "-4px 2px 8px" }}>
-        Esim. fyssarikäynti, annosmuutos, flunssaviikko — näkyvät trendikäyrällä.
+        Esim. fyssarikäynti, tavoitemuutos, flunssaviikko — näkyvät trendikäyrällä.
       </div>
       <MarksEditor marks={marks} addMark={addMark} removeMark={removeMark} />
     </div>
@@ -267,6 +273,25 @@ export function MarksEditor({ marks, addMark, removeMark }) {
           style={{ flex: "0 0 auto", width: 38, height: 38, borderRadius: 10, background: C.pine, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <Plus size={18} color="#fff" strokeWidth={2.5} />
         </button>
+      </div>
+    </Card>
+  );
+}
+
+/* "Eilisen treenin jälkeen": pain this morning, 0–10, one tap; the same tap
+   clears it. Shown only on a morning after a training day. */
+function MorningPain({ value, onSet }) {
+  return (
+    <Card style={{ padding: 12 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600, color: C.ink }}>Eilisen treenin jälkeen</div>
+      <div style={{ fontSize: 12.5, color: C.inkSoft, margin: "2px 0 9px" }}>Kipu tänä aamuna, 0–{PAIN_MAX}</div>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${PAIN_MAX + 1}, 1fr)`, gap: 4 }}>
+        {Array.from({ length: PAIN_MAX + 1 }, (_, v) => (
+          <button key={v} className="tap" onClick={() => onSet(v)} aria-label={`Aamun kipu ${v}`} aria-pressed={value === v}
+            style={{ height: 34, borderRadius: 9, fontSize: 13.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", border: `1px solid ${value === v ? C.amber : C.line}`, background: value === v ? C.amber : C.surface, color: value === v ? "#fff" : C.inkSoft }}>
+            {v}
+          </button>
+        ))}
       </div>
     </Card>
   );
@@ -388,7 +413,7 @@ export function ExerciseRow({ ex, completed, dayGoal, dayDose, minutes, goalMin,
                 {week.done}/{week.target} vk
               </span>
             )}
-            {stale && <span> · kirjattu annoksella {dayLabel || `${dayGoal} ${dayGoal === 1 ? "sarja" : "sarjaa"}`}</span>}
+            {stale && <span> · kirjattu tavoitteella {dayLabel || `${dayGoal} ${dayGoal === 1 ? "sarja" : "sarjaa"}`}</span>}
           </div>
         )}
       </button>

@@ -55,7 +55,7 @@ editing instead.
 
 ```
 npm ci                                   # match the lockfile, as CI does
-npm test                                 # vitest, ~230 tests
+npm test                                 # vitest, ~260 tests
 npm run typecheck                        # tsc --noEmit — see caveat below
 BASE_PATH=/liikepaivakirja/ npm run build   # what the deploy runs
 npm run build:single                     # one self-contained .html, no worker
@@ -65,11 +65,11 @@ npm run dev
 Both build targets must pass before shipping. `build:single` is a real target, not
 a curiosity, and the service worker is deliberately absent from it.
 
-**`npm run typecheck` does not currently pass** — around 73 pre-existing errors,
-almost all of them tsc inferring required props from the first usage of a
-component whose props are untyped (`MiniBtn` needing `danger`, and so on), plus a
-few `unknown` arithmetic complaints. It is **not** in the deploy path; the workflow
-runs `npm test` and `npm run build` only. So: do not treat a red typecheck as
+**`npm run typecheck` does not currently pass** — around 32 pre-existing errors
+(down from 73 once the shared components' optional props were typed `any`):
+mostly untyped refs read as `{}` in App, a few `unknown` arithmetic complaints.
+It is **not** in the deploy path; the workflow runs `npm test` and
+`npm run build` only. So: do not treat a red typecheck as
 something you broke, and do not claim it clean. Compare the error count against a
 pristine clone before and after a change, and keep it from growing.
 
@@ -80,14 +80,16 @@ pristine clone before and after a change, and keep it from growing.
 ```
 src/domain/    pure logic — no React, no platform APIs, heavily tested
                backup dates defaults dose exportfmt freq gym help library
-               load normalize num psfs regions report reportview restore
-               steps structures swipe taxonomy      (+ index.ts barrel)
+               load morning normalize num phase programtext psfs regions
+               report reportview restore steps structures swipe taxonomy
+               templates                            (+ index.ts barrel)
 src/storage/   store.ts (IndexedDB + async bridge), backup.ts (snapshots),
                backupState.ts, fsbackup.ts
 src/platform/  download.ts share.ts sw.ts sound.ts wakelock.ts
                                                  (browser capability wrappers)
-src/ui/        App Today Focus History Edit Modals Library BodyMap common
-               Backup Help Psfs Report Restore Update  swipe.ts (hook)
+src/ui/        App Today Focus History ExerciseChart Edit Modals Library
+               BodyMap common Backup Help Psfs Report Restore Update
+               Templates ProgramImport Phase           swipe.ts (hook)
                ErrorBoundary (one per tab, per modal and per day)
 tests/         mirrors domain/ plus mount tests
 ```
@@ -95,7 +97,7 @@ tests/         mirrors domain/ plus mount tests
 Each `src/*/` folder also holds a one-line `README` naming its job; those are
 copied into the build output and are harmless there.
 
-`src/ui/App.tsx` is about 1000 lines and owns all state, every mutation and every
+`src/ui/App.tsx` is about 1200 lines and owns all state, every mutation and every
 persistence call. Views are presentational and receive callbacks. When adding a
 feature, the state and the writes go in `App.tsx`; the rendering does not.
 
@@ -134,6 +136,12 @@ is in localStorage because it must be readable synchronously before React mounts
 acceptable, no "improving" verdicts, no trend arrows on symptom counts. The one
 interpretive statement anywhere is the PSFS band, and that threshold is published
 rather than ours. Interpretation belongs to the physiotherapist.
+
+**Setup is pick-then-adjust.** Every new field gets a working default, and no
+feature may add a required setup step. Heavy first setup is how apps like this
+drift: each feature adds a knob, defaults do not encode the real-world shape,
+and the person fills in a form before the first ordinary day. Templates, library
+starting targets and the compact editor exist because of this rule.
 
 **Friction is a feature killer.** Daily logging has to stay under about thirty
 seconds or it stops happening. Anything added to `Today` must justify its vertical

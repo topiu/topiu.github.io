@@ -46,3 +46,23 @@ export async function shareTextFile(
     return "failed";
   }
 }
+
+/* Share a link through the system sheet where there is one (iOS, Android),
+   else copy it. Resolves to what happened, so the UI can say it honestly. */
+export async function shareLink(url: string, title: string): Promise<"shared" | "copied" | "cancelled" | "failed"> {
+  try {
+    const nav: any = navigator;
+    if (nav.share) {
+      await nav.share({ title, url });
+      return "shared";
+    }
+  } catch (e: any) {
+    if (e && e.name === "AbortError") return "cancelled";
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    return "copied";
+  } catch {
+    return "failed";
+  }
+}

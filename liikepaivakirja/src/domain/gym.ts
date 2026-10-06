@@ -156,6 +156,7 @@ const EQ_BY_NAME: [RegExp, string][] = [
 ];
 
 export function inferEquipment(ex) {
+  if (ex && EQUIP_IDS.includes(ex.equip)) return ex.equip;
   const name = (ex && ex.name) || "";
   for (const [re, id] of EQ_BY_NAME) if (re.test(name)) return id;
   return "bw";
@@ -267,3 +268,38 @@ export function timerLeft(timer, now) {
 }
 
 export const fmtClock = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+/* ------------------------------------------------------------------ */
+/*  Per-exercise history for the Historia chart                         */
+/* ------------------------------------------------------------------ */
+
+/* One point per day the exercise has recorded sets or pain, oldest first:
+   the heaviest set's load (null when nothing had a load), the sets as done,
+   and the pain during it if recorded. Facts only — no fitted line. */
+export function exerciseSeries(logs, exId) {
+  return Object.keys(logs || {})
+    .filter((k) => DATE_RE.test(k))
+    .sort()
+    .map((k) => {
+      const l = logs[k];
+      const sets = detailOf(l, exId);
+      const pain = l && l.pain && typeof l.pain[exId] === "number" ? l.pain[exId] : null;
+      if (!sets.length && pain == null) return null;
+      const top = Math.max(0, ...sets.map((s) => s.kg || 0));
+      return { date: k, top: top > 0 ? top : null, sets, pain };
+    })
+    .filter(Boolean);
+}
+
+/* exercises that have anything to chart, most recently trained first */
+export function chartableExercises(logs, exercises) {
+  const last = {};
+  Object.keys(logs || {}).forEach((k) => {
+    const l = logs[k];
+    if (!l) return;
+    [...Object.keys(l.detail || {}), ...Object.keys(l.pain || {})].forEach((id) => {
+      if (!last[id] || k > last[id]) last[id] = k;
+    });
+  });
+  return (exercises || []).filter((e) => last[e.id]).sort((a, b) => (last[a.id] < last[b.id] ? 1 : -1));
+}

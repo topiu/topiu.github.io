@@ -31,6 +31,7 @@ export function buildCSV(exercises, symptoms, logs, marks, psfs) {
     "Askeleet",
     "Sarjat",
     "Kipu liikkeen aikana (0–10)",
+    "Aamun kipu (0–10)",
     "Muistiinpano",
     "Merkkipaalut",
   ];
@@ -81,6 +82,7 @@ export function buildCSV(exercises, symptoms, logs, marks, psfs) {
         .filter((e) => l.pain && typeof l.pain[e.id] === "number")
         .map((e) => `${e.name} ${l.pain[e.id]}`)
         .join(" | "),
+      typeof l.morning === "number" ? l.morning : "",
       (l.note || "").replace(/\r?\n/g, " "),
       (marksByDate[k] || []).join(" | "),
     ]);

@@ -5,7 +5,8 @@ import { FREQ_DAILY, freqOf } from "./freq";
 import { SOURCES } from "./library";
 import { toNum, uid } from "./num";
 import { normalizePsfs } from "./psfs";
-import { normalizeDetail, normalizePain } from "./gym";
+import { EQUIP_IDS, normalizeDetail, normalizePain } from "./gym";
+import { normalizeMorning } from "./morning";
 import { REGION_BY_ID } from "./regions";
 import { STRUCT_BY_ID } from "./structures";
 import { EX_TYPE_IDS, QUALITY_IDS } from "./taxonomy";
@@ -26,6 +27,10 @@ export function normalizeExercises(arr) {
     met: e && Number(e.met) > 0 ? Number(e.met) : null,
     source: e && e.source && SOURCES[e.source.src] ? { src: e.source.src, note: typeof e.source.note === "string" ? e.source.note.slice(0, 200) : "", edited: !!e.source.edited } : null,
     archived: !!(e && e.archived),
+    /* equipment treenitila opens on before there is any history; from templates */
+    equip: e && EQUIP_IDS.includes(e.equip) ? e.equip : null,
+    /* a demonstration video; only http(s) links survive, so nothing else can be opened */
+    video: e && typeof e.video === "string" && /^https?:\/\/\S+$/i.test(e.video.trim()) ? e.video.trim().slice(0, 500) : "",
     /* day the exercise was added, so the report does not count the days before
        it as missed; absent on exercises created before it was recorded */
     added: e && typeof e.added === "string" && DATE_RE.test(e.added) ? e.added : null,
@@ -188,6 +193,8 @@ export function normalizeLogs(raw, exById) {
     if (Object.keys(detail).length) norm.detail = detail;
     const pain = normalizePain(l.pain);
     if (Object.keys(pain).length) norm.pain = pain;
+    const morning = normalizeMorning(l.morning);
+    if (morning != null) norm.morning = morning;
     if (!isEmptyLog(norm)) out[k] = norm;
   });
   return out;

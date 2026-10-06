@@ -1,6 +1,6 @@
 /* ui/Edit — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useRef } from "react";
-import { ChevronRight, X, ArrowUp, ArrowDown, Archive, ArchiveRestore, BookOpen, Minus, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, X, ArrowUp, ArrowDown, Archive, ArchiveRestore, BookOpen, ClipboardPaste, Flag, LayoutList, Link2, Minus, Plus } from "lucide-react";
 import { EX_TYPES, SIDES, doseLabel, isMin, regionName, structName, FREQ_DAILY, FREQ_MIN, freqLabel, freqOf} from "../domain";
 import { C } from "../styles/tokens";
 import { RegionPicker } from "./BodyMap";
@@ -10,11 +10,32 @@ import { AddRow, Card, MiniBtn, NumField, ResetBtn, SectionLabel } from "./commo
 /* ================================================================== */
 /*  EDIT                                                               */
 /* ================================================================== */
-export function EditView({ exercises, symptoms, renameItem, setDose, setFreq, setDesc, setExType, cycleExMuscle, toggleSymRegion, toggleExStructure, toggleSymStructure, addItem, removeItem, moveItem, resetList, archiveItem, addFromLibrary, logDoseChange }) {
+/* the targets most programmes use; anything else is typed in the fields */
+const SET_PRESETS = [
+  { label: "2 × 10", sets: 2, reps: 10, hold: null },
+  { label: "3 × 8", sets: 3, reps: 8, hold: null },
+  { label: "3 × 10", sets: 3, reps: 10, hold: null },
+  { label: "3 × 12", sets: 3, reps: 12, hold: null },
+  { label: "3 × 15", sets: 3, reps: 15, hold: null },
+  { label: "3 × 30 s", sets: 3, reps: null, hold: 30 },
+  { label: "10 × 10 s", sets: 10, reps: null, hold: 10 },
+];
+const addBtn = { flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "11px 6px", borderRadius: 13, border: `1px solid ${C.pine}`, background: C.surface, color: C.pineDeep, fontSize: 13.5, fontWeight: 600 };
+const MIN_PRESETS = [
+  { label: "20 min", min: 20 },
+  { label: "30 min", min: 30 },
+  { label: "45 min", min: 45 },
+  { label: "60 min", min: 60 },
+];
+
+export function EditView({ openPhase, setVideo, openPaste, shareProgram, setTarget, openTemplates, exercises, symptoms, renameItem, setDose, setFreq, setDesc, setExType, cycleExMuscle, toggleSymRegion, toggleExStructure, toggleSymStructure, addItem, removeItem, moveItem, resetList, archiveItem, addFromLibrary, logDoseChange }) {
   const [exDraft, setExDraft] = useState("");
   const [syDraft, setSyDraft] = useState("");
   const [picker, setPicker] = useState(null); // { kind:'ex'|'sy', id }
   const [libOpen, setLibOpen] = useState(false);
+  const [openId, setOpenId] = useState(null);
+  const [moreId, setMoreId] = useState(null);
+  const [shared, setShared] = useState("");
   /* snapshot dose label when a dose field gains focus; compare on blur */
   const doseSnap = useRef({});
   const exercisesRef = useRef(exercises);
@@ -43,22 +64,67 @@ export function EditView({ exercises, symptoms, renameItem, setDose, setFreq, se
     <div className="rise">
       {/* Exercises */}
       <SectionLabel>Liikkeet</SectionLabel>
-      <div style={{ fontSize: 12.5, color: C.inkSoft, margin: "-4px 2px 8px", lineHeight: 1.5 }}>
-        Toistoluokka: <b>Sarjat</b> = montako kertaa (kuitattava määrä), <b>Toistot</b> = toistoa/kerta, <b>Pito</b> = sekunteina. Esim. 2 × 5 → Sarjat 2, Toistot 5. 10 × 10 s pito → Sarjat 10, Pito 10.
+      {/* Two ways to add many at once; typing one by one is the AddRow below. */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <button className="tap" onClick={() => setLibOpen(true)}
+          style={addBtn}>
+          <BookOpen size={16} /> Kirjastosta
+        </button>
+        {openTemplates && (
+          <button className="tap" onClick={openTemplates}
+            style={addBtn}>
+            <LayoutList size={16} /> Pohjasta
+          </button>
+        )}
+        {openPaste && (
+          <button className="tap" onClick={openPaste} style={addBtn}>
+            <ClipboardPaste size={16} /> Tekstinä
+          </button>
+        )}
       </div>
-      <button className="tap" onClick={() => setLibOpen(true)}
-        style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 10, padding: "12px", borderRadius: 13, border: `1px solid ${C.pine}`, background: C.surface, color: C.pineDeep, fontSize: 15, fontWeight: 600 }}>
-        <BookOpen size={17} /> Lisää kirjastosta
-      </button>
-      <Card style={{ padding: 8 }}>
-        {exercises.filter((e) => !e.archived).map((e, i) => (
-          <div key={e.id} style={{ background: C.surfaceSoft, border: `1px solid ${C.line}`, borderRadius: 12, padding: 10, marginTop: i === 0 ? 0 : 8 }}>
+      {/* Compact by default: one line per exercise — name, target, frequency —
+          and the full editor only for the one being changed. Every card used to
+          be fully open (three dose fields, frequency, description, five type
+          chips, target areas), which made a six-exercise programme one very long
+          page. Description, type and target areas sit under "Lisätiedot". */}
+      <Card style={{ padding: 6 }}>
+        {exercises.filter((e) => !e.archived).map((e, i) => {
+          const open = openId === e.id;
+          const target = doseLabel(e.dose, e.unit);
+          const summary = [target || "ei tavoitetta", freqOf(e) < FREQ_DAILY ? freqLabel(freqOf(e)) : ""].filter(Boolean).join(" · ");
+          if (!open) {
+            return (
+              <button key={e.id} className="tap" onClick={() => { setOpenId(e.id); setMoreId(null); }} aria-label={`Muokkaa: ${e.name}`}
+                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "11px 8px", borderTop: i === 0 ? "none" : `1px solid ${C.line}` }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: C.ink, overflowWrap: "anywhere" }}>{e.name}</span>
+                  <span style={{ display: "block", fontSize: 12.5, color: target ? C.inkSoft : C.amber, marginTop: 1 }}>{summary}</span>
+                </span>
+                <ChevronRight size={16} style={{ flex: "0 0 auto", color: C.inkFaint }} />
+              </button>
+            );
+          }
+          return (
+          <div key={e.id} style={{ background: C.surfaceSoft, border: `1px solid ${C.line}`, borderRadius: 12, padding: 10, margin: i === 0 ? "0 0 6px" : "6px 0" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input value={e.name} onChange={(ev) => renameItem("ex", e.id, ev.target.value)} aria-label="Liikkeen nimi"
                 style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", fontSize: 15, fontWeight: 600, padding: "6px 4px", color: C.ink, outline: "none" }} />
               <MiniBtn label="Ylös" disabled={i === 0} onClick={() => moveItem("ex", e.id, -1)}><ArrowUp size={16} /></MiniBtn>
               <MiniBtn label="Alas" onClick={() => moveItem("ex", e.id, 1)}><ArrowDown size={16} /></MiniBtn>
               <MiniBtn label="Arkistoi" onClick={() => archiveItem("ex", e.id, true)}><Archive size={16} /></MiniBtn>
+              <MiniBtn label="Sulje" onClick={() => setOpenId(null)}><ChevronUp size={16} /></MiniBtn>
+            </div>
+            {/* one tap for the common targets; the fields below for anything else */}
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8 }}>
+              {(isMin(e) ? MIN_PRESETS : SET_PRESETS).map((p) => {
+                const on = doseLabel({ ...p }, e.unit) === target;
+                return (
+                  <button key={p.label} className="tap" onClick={() => setTarget(e.id, p)} aria-pressed={on}
+                    style={{ fontSize: 12.5, fontWeight: 600, padding: "6px 10px", borderRadius: 999, border: `1px solid ${on ? C.pine : C.line}`, background: on ? C.pine : C.surface, color: on ? "#fff" : C.inkSoft }}>
+                    {p.label}
+                  </button>
+                );
+              })}
             </div>
             <div style={{ display: "flex", alignItems: "flex-end", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
               {isMin(e) && (
@@ -71,11 +137,18 @@ export function EditView({ exercises, symptoms, renameItem, setDose, setFreq, se
               {!isMin(e) && <span style={{ paddingBottom: 9, color: C.inkFaint, fontSize: 15 }}>×</span>}
               {!isMin(e) && <NumField label="Toistot" value={e.dose.reps} placeholder="–" onChange={(v) => setDose(e.id, "reps", v)} exId={e.id} onDoseFocus={onDoseFocus} onDoseBlur={onDoseBlur} />}
               {!isMin(e) && <NumField label="Pito (s)" value={e.dose.hold} placeholder="–" onChange={(v) => setDose(e.id, "hold", v)} exId={e.id} onDoseFocus={onDoseFocus} onDoseBlur={onDoseBlur} />}
-              <span style={{ paddingBottom: 9, marginLeft: "auto", fontSize: 13, fontWeight: 600, color: doseLabel(e.dose, e.unit) ? C.pineDeep : C.inkFaint }}>
-                {doseLabel(e.dose, e.unit) || "ei annosta"}
+              <span style={{ paddingBottom: 9, marginLeft: "auto", fontSize: 13, fontWeight: 600, color: target ? C.pineDeep : C.inkFaint }}>
+                {target || "ei tavoitetta"}
               </span>
             </div>
             <FreqField value={freqOf(e)} onChange={(v) => setFreq(e.id, v)} />
+            <button className="tap" onClick={() => setMoreId(moreId === e.id ? null : e.id)} aria-expanded={moreId === e.id}
+              style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 10, fontSize: 13, fontWeight: 600, color: C.pineDeep }}>
+              {moreId === e.id ? <ChevronUp size={15} /> : <ChevronDown size={15} />} Lisätiedot
+              <span style={{ fontWeight: 500, color: C.inkFaint }}>ohje, tyyppi, kohdealueet</span>
+            </button>
+            {moreId === e.id && (
+              <>
             <textarea
               value={e.desc || ""}
               onChange={(ev) => setDesc(e.id, ev.target.value)}
@@ -107,13 +180,39 @@ export function EditView({ exercises, symptoms, renameItem, setDose, setFreq, se
               </span>
               <ChevronRight size={15} style={{ color: C.inkFaint }} />
             </button>
+            {setVideo && (
+              <input value={e.video || ""} onChange={(ev) => setVideo(e.id, ev.target.value)} placeholder="Videolinkki (https://…), valinnainen" aria-label="Videolinkki" inputMode="url"
+                style={{ width: "100%", marginTop: 8, border: `1px solid ${C.line}`, borderRadius: 9, background: C.surface, padding: "9px 10px", fontSize: 13.5, color: C.ink, outline: "none" }} />
+            )}
             {e.source && <SourceBadge source={e.source} />}
+              </>
+            )}
           </div>
-        ))}
+          );
+        })}
         <AddRow value={exDraft} setValue={setExDraft} placeholder="Lisää liike…" onAdd={() => { addItem("ex", exDraft); setExDraft(""); }} />
       </Card>
       <ArchivedList which="ex" items={exercises.filter((e) => e.archived)} restore={archiveItem} remove={removeItem} />
-      <ResetBtn onClick={() => resetList("ex")} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <ResetBtn onClick={() => resetList("ex")} />
+        {shareProgram && (
+          <button className="tap"
+            onClick={async () => {
+              const r = await shareProgram();
+              setShared(r === "shared" ? "Ohjelma jaettu." : r === "copied" ? "Linkki kopioitu." : r === "cancelled" ? "" : "Jakaminen ei onnistunut.");
+            }}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, margin: "8px 2px 0", fontSize: 13, fontWeight: 600, color: C.pineDeep }}>
+            <Link2 size={14} /> Jaa ohjelma linkkinä
+          </button>
+        )}
+        {openPhase && (
+          <button className="tap" onClick={openPhase}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, margin: "8px 2px 0", fontSize: 13, fontWeight: 600, color: C.pineDeep }}>
+            <Flag size={14} /> Aloita uusi vaihe
+          </button>
+        )}
+      </div>
+      {shared && <div style={{ fontSize: 12.5, color: C.inkSoft, margin: "4px 2px 0" }}>{shared} Linkissä on vain ohjelma, ei päiväkirjamerkintöjä.</div>}
 
       <div style={{ height: 10 }} />
 

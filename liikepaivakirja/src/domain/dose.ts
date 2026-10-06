@@ -79,6 +79,6 @@ export const isEmptyLog = (l) => {
   const noSets = (!l.sets || Object.values(l.sets).every((v) => !v)) && noMins;
   /* pain recorded during an exercise keeps the day even with no sets logged:
      stopping because it hurt is exactly what the physiotherapist needs to see */
-  const noPain = !l.pain || !Object.keys(l.pain).length;
+  const noPain = (!l.pain || !Object.keys(l.pain).length) && typeof l.morning !== "number";
   return noSets && noPain && !l.steps && (!l.flared || !l.flared.length) && (!l.note || !l.note.trim());
 };

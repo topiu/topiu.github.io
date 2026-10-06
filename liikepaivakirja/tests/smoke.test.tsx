@@ -177,6 +177,8 @@ describe("weekly prescription", () => {
     await waitFor(() => expect(q.getAllByText("Muokkaa").length).toBeGreaterThan(0));
     fireEvent.click(q.getAllByText("Muokkaa")[0]);
 
+    /* the editor is compact: open the first exercise to reach its frequency */
+    fireEvent.click(await waitFor(() => q.getAllByLabelText(/^Muokkaa: /)[0]));
     /* every exercise starts daily, so no counter is shown yet */
     await waitFor(() => expect(q.getAllByText("päivittäin").length).toBeGreaterThan(0));
     /* four taps down: 7 -> 3 */

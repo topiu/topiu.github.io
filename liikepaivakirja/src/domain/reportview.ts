@@ -134,7 +134,7 @@ function exerciseTable(m) {
   return `<table>
     <thead><tr>
       <th>Liike</th><th class="n">Toteutuma</th><th class="n">Kerrat</th>
-      <th class="n">Määrä</th><th class="n">Yli annoksen</th>
+      <th class="n">Määrä</th><th class="n">Yli tavoitteen</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>${m.archivedExercises ? `<p class="sub">Lisäksi ${m.archivedExercises} arkistoitua liikettä, jotka eivät ole mukana luvuissa.</p>` : ""}`;
@@ -260,6 +260,11 @@ export function reportBodyHTML(m, opts = {} as any) {
 
   <section><h2>Oireet</h2>${symptomTable(m)}
     ${
+      m.morning
+        ? `<p class="sub">Aamun kipu treenipäivän jälkeen: keskiarvo ${String(m.morning.mean).replace(".", ",")}, korkein ${m.morning.max} / 10 (${m.morning.n} aamua).</p>`
+        : ""
+    }
+    ${
       m.steps
         ? `<p class="sub">Askeleet keskimäärin ${m.steps.mean.toLocaleString("fi-FI")} / vrk (${m.steps.days} päivältä dataa).</p>`
         : ""
@@ -268,7 +273,7 @@ export function reportBodyHTML(m, opts = {} as any) {
 
   ${
     m.doseChanges.length
-      ? `<section><h2>Annosmuutokset</h2>${markList(m.doseChanges, "")}</section>`
+      ? `<section><h2>Tavoitemuutokset</h2>${markList(m.doseChanges, "")}</section>`
       : ""
   }
 
@@ -289,7 +294,7 @@ export function reportBodyHTML(m, opts = {} as any) {
   }
 
   <div class="method">
-    <p><b>Miten luvut on laskettu.</b> Toteutuma vertaa tehtyä määrää siihen annokseen, joka oli voimassa kyseisenä päivänä — annoksen muuttaminen ei muuta historiaa. Liikkeen jakso alkaa päivästä, jona se ensimmäisen kerran kirjattiin, ei jakson alusta. <b>Kerrat</b> on toteutuneet kerrat suhteessa siihen, montako kertaa ohjeistus edellytti tällä jaksolla; päivittäisillä liikkeillä se on jakson päivien määrä, harvemmilla viikkotavoite jaksoon suhteutettuna.</p>
+    <p><b>Miten luvut on laskettu.</b> Toteutuma vertaa tehtyä määrää siihen tavoitteeseen, joka oli voimassa kyseisenä päivänä — tavoitteen muuttaminen ei muuta historiaa. Liikkeen jakso alkaa päivästä, jona se ensimmäisen kerran kirjattiin, ei jakson alusta. <b>Kerrat</b> on toteutuneet kerrat suhteessa siihen, montako kertaa ohjeistus edellytti tällä jaksolla; päivittäisillä liikkeillä se on jakson päivien määrä, harvemmilla viikkotavoite jaksoon suhteutettuna.</p>
     <p><b>PSFS</b> (Patient-Specific Functional Scale): henkilön itse nimeämät toiminnot, asteikko 0 = en pysty lainkaan … ${PSFS_MAX} = pystyn kuten ennen vaivaa. Arvio ${PSFS_INTERVAL_DAYS} päivän välein. Keskiarvon merkittävän muutoksen raja-arvot ${PSFS_MID.small} (pieni), ${PSFS_MID.medium} (kohtalainen) ja ${PSFS_MID.large} (suuri); yksittäisen toiminnon pienin luotettavasti havaittava muutos on noin ${PSFS_MDC_SINGLE} pistettä.</p>
     <p>Kaikki tiedot ovat henkilön itsensä kirjaamia. Tämä ei ole diagnoosi eikä hoitosuositus.</p>
   </div>
@@ -361,12 +366,13 @@ export function reportText(m, opts = {} as any) {
   m.exercises.forEach((e) => {
     const d = e.dose ? ` (${e.dose})` : "";
     const f = e.freq < FREQ_DAILY ? `, ${e.freqText}` : "";
-    L.push(`- ${e.name}${d}${f}: ${e.completePct == null ? "–" : e.completePct + " %"}, ${e.daysComplete}/${e.target} kertaa${e.over ? `, yli annoksen ${e.over} pv` : ""}`);
+    L.push(`- ${e.name}${d}${f}: ${e.completePct == null ? "–" : e.completePct + " %"}, ${e.daysComplete}/${e.target} kertaa${e.over ? `, yli tavoitteen ${e.over} pv` : ""}`);
     if (gymLine(e)) L.push(`  ${gymLine(e)}`);
   });
 
   L.push("");
   L.push("OIREET");
+  if (m.morning) L.push(`- aamun kipu treenipäivän jälkeen: ka ${String(m.morning.mean).replace(".", ",")}, korkein ${m.morning.max}/10 (${m.morning.n} aamua)`);
   if (!m.symptoms.length) L.push("- ei seurattavia oireita");
   m.symptoms.forEach((s) => {
     L.push(`- ${s.name}: ${s.days} pv${s.pct == null ? "" : ` (${s.pct} %)`}${s.meanSeverity == null ? "" : `, voimakkuus ka. ${s.meanSeverity}`}`);
@@ -374,7 +380,7 @@ export function reportText(m, opts = {} as any) {
 
   if (m.doseChanges.length) {
     L.push("");
-    L.push("ANNOSMUUTOKSET");
+    L.push("TAVOITEMUUTOKSET");
     m.doseChanges.forEach((d) => L.push(`- ${shortKey(d.date)} ${d.text}`));
   }
   if (m.milestones.length) {
@@ -389,6 +395,6 @@ export function reportText(m, opts = {} as any) {
   }
 
   L.push("");
-  L.push("Itse raportoitua seurantaa. Toteutuma on laskettu kunakin päivänä voimassa olleeseen annokseen.");
+  L.push("Itse raportoitua seurantaa. Toteutuma on laskettu kunakin päivänä voimassa olleeseen tavoitteeseen.");
   return L.join("\n");
 }

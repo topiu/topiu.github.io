@@ -4,6 +4,7 @@ import { ChevronRight, X, Zap, Download, Upload, FileText } from "lucide-react";
 import { QUALITIES, addDays, dayLoad, goalOf, humanDate, isCompleteOn, keyOf, parseKey, qualityLabel, shortDate, startOfWeek } from "../domain";
 import { C } from "../styles/tokens";
 import { BodyLoadSection } from "./BodyMap";
+import { ExerciseChartSection } from "./ExerciseChart";
 import { Card, Empty, IconBtn, SectionLabel, Stat } from "./common";
 
 /* ================================================================== */
@@ -122,6 +123,9 @@ export function HistoryView({ days14, logs, symptoms, allSymptoms, exercises, co
         allowDelta={range !== 0}
       />
 
+      {/* only appears once treenitila has recorded something */}
+      <ExerciseChartSection logs={logs} exercises={exercises} />
+
       {range === 14 ? (
         <>
           <SectionLabel>Oireiden uusiutuminen</SectionLabel>
@@ -183,7 +187,7 @@ export function HistoryView({ days14, logs, symptoms, allSymptoms, exercises, co
                     {(flaredNames.length > 0 || hasNote || dayMarks.length > 0 || over || steps > 0) && (
                       <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
                         {over && (
-                          <span title="Kirjattu annosta enemmän" style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 11, fontWeight: 700, color: C.pineDeep, background: C.pineTint, border: `1px solid ${C.pineSoft}`, borderRadius: 999, padding: "1px 7px" }}>
+                          <span title="Kirjattu tavoitetta enemmän" style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 11, fontWeight: 700, color: C.pineDeep, background: C.pineTint, border: `1px solid ${C.pineSoft}`, borderRadius: 999, padding: "1px 7px" }}>
                             <Zap size={10} fill={C.pineDeep} color={C.pineDeep} /> ylitys
                           </span>
                         )}

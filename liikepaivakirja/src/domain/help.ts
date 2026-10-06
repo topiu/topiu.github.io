@@ -31,8 +31,8 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: "what",
     title: "Mikä tämä on",
     body: [
-      "Oma päiväkirja fysioterapiaharjoituksista ja oireista. Liikkeet, annokset ja tiheydet tulevat sinun fysioterapeutiltasi — sovellus vain pitää kirjaa siitä, mitä on tehty ja miltä on tuntunut.",
-      "Sovellus ei arvioi, onko kipu hyväksyttävää tai pitäisikö annosta muuttaa. Se kokoaa tiedot yhdelle sivulle, jonka voi ottaa vastaanotolle. Tulkinta kuuluu ammattilaiselle.",
+      "Oma päiväkirja harjoittelusta ja oireista — kuntoutukseen tai ihan omaan treeniin. Liikkeet, tavoitteet ja tiheydet voivat tulla fysioterapeutilta, valmentajalta tai valmiista pohjasta. Sovellus pitää kirjaa siitä, mitä on tehty ja miltä on tuntunut.",
+      "Sovellus ei arvioi, onko kipu hyväksyttävää tai pitäisikö tavoitetta muuttaa. Se kokoaa tiedot yhdelle sivulle, jonka voi ottaa vastaanotolle. Tulkinta kuuluu ammattilaiselle.",
     ],
   },
   {
@@ -48,8 +48,8 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: "day",
     title: "Päivän kirjaus",
     body: [
-      "Napauta liikkeen ympyrää, kun päivän annos on tehty, tai lisää sarjoja yksi kerrallaan. Annoksen yli menevät sarjat merkitään erikseen.",
-      "”Merkitse ohjelma tehdyksi” täyttää kerralla kaiken tekemättömän sen päivän annoksen mukaan. Se ei vähennä jo kirjattua eikä koske liikkeisiin, joiden viikkotavoite on täynnä. Napautuksen voi kumota heti perään.",
+      "Napauta liikkeen ympyrää, kun päivän tavoite on tehty, tai lisää sarjoja yksi kerrallaan. Tavoitteen yli menevät sarjat merkitään erikseen. Salilla Treenitila näyttää yhden liikkeen kerrallaan painoineen ja palautusaikoineen.",
+      "”Merkitse ohjelma tehdyksi” täyttää kerralla kaiken tekemättömän sen päivän tavoitteen mukaan. Se ei vähennä jo kirjattua eikä koske liikkeisiin, joiden viikkotavoite on täynnä. Napautuksen voi kumota heti perään.",
       "Päivää vaihdetaan nuolilla tai pyyhkäisemällä sivusuunnassa: oikealle edelliseen päivään, vasemmalle takaisin. Unohtuneen päivän voi siis täydentää jälkikäteen.",
     ],
   },
@@ -63,10 +63,10 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     id: "dose",
-    title: "Annos ja tiheys",
+    title: "Tavoite ja tiheys",
     body: [
-      "Annos ja tiheys muokataan Muokkaa-välilehdellä. Muutos kirjautuu itsestään aikajanalle, jotta vastaanotolla näkyy milloin mikä muuttui.",
-      "Jokainen päivä jäädyttää sen annoksen, joka oli silloin voimassa. Annoksen nostaminen ei siis muuta menneitä päiviä keskeneräisiksi.",
+      "Tavoite (sarjat × toistot tai pito) ja tiheys muokataan Muokkaa-välilehdellä. Muutos kirjautuu itsestään aikajanalle, jotta vastaanotolla näkyy milloin mikä muuttui.",
+      "Jokainen päivä jäädyttää sen tavoitteen, joka oli silloin voimassa. Tavoitteen nostaminen ei siis muuta menneitä päiviä keskeneräisiksi.",
     ],
   },
   {
@@ -82,7 +82,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: "report",
     title: "Raportti vastaanotolle",
     body: [
-      "Historia → Raportti fysioterapeutille kokoaa yhdelle sivulle toteutuman, toimintakyvyn, oireet, annosmuutokset ja omat kysymyksesi. Sen voi tulostaa, ladata tiedostona tai kopioida tekstinä viestiin.",
+      "Historia → Raportti fysioterapeutille kokoaa yhdelle sivulle toteutuman, toimintakyvyn, oireet, tavoitemuutokset ja omat kysymyksesi. Sen voi tulostaa, ladata tiedostona tai kopioida tekstinä viestiin.",
       "Kirjoita kysymykset valmiiksi raporttiin ennen käyntiä. Se on koko sovelluksen tarkoitus: vastaanotolla ei tarvitse muistella.",
     ],
   },
@@ -101,7 +101,7 @@ export const HELP_SECTIONS: HelpSection[] = [
 export const FIRST_RUN = {
   title: "Tervetuloa",
   lines: [
-    "Liikkeet ja oireet ovat valmiina esimerkkeinä. Muokkaa ne Muokkaa-välilehdellä fysioterapeutin ohjeen mukaisiksi.",
+    "Alla on valmiita pohjia kuntoutukseen, kuntosalille, kahvakuulalle, kehonpainolla ja juoksun tueksi. Voit myös muokata esimerkkiohjelmaa itse — kaiken voi muuttaa myöhemmin.",
     "Merkitse päivän liikkeet Tänään-välilehdellä. Yksi napautus riittää koko ohjelmaan.",
     "Tiedot pysyvät vain tässä laitteessa, joten tee varmuuskopio heti kun ohjelma on kohdallaan.",
   ],

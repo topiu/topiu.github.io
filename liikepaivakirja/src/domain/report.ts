@@ -35,6 +35,7 @@ import { FREQ_DAILY, creditedSessions, expectedSessions, freqLabel, freqOf } fro
 import { DATE_RE } from "./dates";
 import { psfsActivityChanges, psfsChange, psfsSeries } from "./psfs";
 import { loadSummary, painSummary } from "./gym";
+import { morningSummary } from "./morning";
 import { SEVERITY, qualityLabel } from "./taxonomy";
 
 const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : null);
@@ -238,6 +239,7 @@ export function buildReport({ exercises = [], symptoms = [], logs = {}, marks = 
     archivedExercises: exercises.length - activeEx.length,
     symptoms: syRows,
     symptomFreeDays,
+    morning: morningSummary(logs, rangeKeys),
     steps: stepDays ? { mean: Math.round(stepSum / stepDays), days: stepDays } : null,
     doseChanges,
     milestones,

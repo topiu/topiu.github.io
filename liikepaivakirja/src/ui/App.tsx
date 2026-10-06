@@ -1,6 +1,6 @@
 /* ui/App — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { EMPTY_DOSE, FREQ_DAILY, LIB_BY_ID, addDays, datasetToValues, doseSnapshotOf, clampRest, emptyLog, emptyPsfs, expectedSessions, freqLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizePsfs, normalizeSetEntry, normalizeSymptoms, psfsAddActivity, psfsForgetActivity, psfsRenameActivity, psfsRetireActivity, psfsSetScore, resetToDefaults, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid, usedIdsInLogs, weekProgress } from "../domain";
+import { EMPTY_DOSE, FREQ_DAILY, doseLabel, LIB_BY_ID, addDays, datasetToValues, doseSnapshotOf, clampRest, emptyLog, emptyPsfs, expectedSessions, freqLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizePsfs, normalizeSetEntry, normalizeSymptoms, psfsAddActivity, psfsForgetActivity, psfsRenameActivity, psfsRetireActivity, psfsSetScore, exerciseFromLibrary, applyTemplate, TEMPLATE_BY_ID, decodeProgram, encodeProgram, mergeExercises, programFromHash, archiveActive, phaseCount, phaseMarkText, resetToDefaults, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid, usedIdsInLogs, weekProgress } from "../domain";
 import { flushSync } from "react-dom";
 import { hasStore, loadJSON, loadJSONStrict, onFlush, saveJSON, saveJSONDebounced, saveManyNow, subscribeWriteStatus } from "../storage/store";
 import { preRestoreSnapshot, prune as pruneSnapshots } from "../storage/backup";
@@ -16,6 +16,10 @@ import { useDaySwipe } from "./swipe";
 import { OfflineNote, OfflineSettings, UpdateBanner } from "./Update";
 import { TodayView } from "./Today";
 import { FocusView } from "./Focus";
+import { TemplateModal } from "./Templates";
+import { ProgramImportModal } from "./ProgramImport";
+import { PhaseModal } from "./Phase";
+import { shareLink } from "../platform/share";
 import { Style } from "./common";
 
 /* ================================================================== */
@@ -42,6 +46,11 @@ export default function App() {
   /* treenitila: which exercise it opened on (null = closed), and the rest length,
      a device preference kept in physio-ui next to helpDismissed */
   const [focus, setFocus] = useState<any>(null);
+  /* template picker: "replace" on first run, "merge" from Muokkaa */
+  const [templateMode, setTemplateMode] = useState<any>(null);
+  /* programme from text or from a link: { fromLink: exercises | null } */
+  const [programImport, setProgramImport] = useState<any>(null);
+  const [phaseOpen, setPhaseOpen] = useState(false);
   const [restSec, setRestSec] = useState(clampRest(undefined));
   const uiRef = useRef<any>({});
   const undoTimer = useRef<any>(null);
@@ -105,9 +114,11 @@ export default function App() {
         setLoading(false);
         return;
       }
-      let ex = cfg ? normalizeExercises(cfg.exercises) : null;
-      let sy = cfg ? normalizeSymptoms(cfg.symptoms) : null;
-      if (!ex || !ex.length || !sy) {
+      let ex: any = cfg ? normalizeExercises(cfg.exercises) : null;
+      let sy: any = cfg ? normalizeSymptoms(cfg.symptoms) : null;
+      /* seed only when there is no programme at all; an emptied one
+         ("Tyhjä" template) stays empty */
+      if (!ex || !sy) {
         ex = seedExercises();
         sy = seedSymptoms();
         saveJSON("physio-config", { exercises: ex, symptoms: sy });
@@ -132,6 +143,19 @@ export default function App() {
       setHelpDismissed(!!(ui && ui.helpDismissed));
       uiRef.current = ui && typeof ui === "object" ? ui : {};
       setRestSec(clampRest(uiRef.current.restSec));
+      /* A programme link ("#ohjelma=…") opens its preview once the diary has
+         loaded. The fragment is then removed, so a reload does not ask again;
+         it never reached the server in the first place. */
+      try {
+        const payload = programFromHash(window.location.hash);
+        if (payload) {
+          const exs = decodeProgram(payload, keyOf(startOfToday()));
+          if (exs) setProgramImport({ fromLink: exs });
+          window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        }
+      } catch {
+        /* a broken link is ignored, never fatal */
+      }
       const undo = await loadJSON("physio-undo", null);
       if (undo && Array.isArray(undo.exercises)) {
         undoRef.current = undo;
@@ -229,10 +253,10 @@ export default function App() {
   /* auto-log a dose change as a mark on today's date */
   const logDoseChange = useCallback(
     (name, oldLabel, newLabel) => {
-      const o = oldLabel || "ei annosta";
-      const n = newLabel || "ei annosta";
+      const o = oldLabel || "ei tavoitetta";
+      const n = newLabel || "ei tavoitetta";
       if (o === n) return;
-      addMark(keyOf(startOfToday()), `Annos: ${name}: ${o} → ${n}`, true);
+      addMark(keyOf(startOfToday()), `Tavoite: ${name}: ${o} → ${n}`, true);
     },
     [addMark]
   );
@@ -327,6 +351,7 @@ export default function App() {
         steps: src.steps || 0,
         detail: { ...(src.detail || {}) },
         pain: { ...(src.pain || {}) },
+        ...(typeof src.morning === "number" ? { morning: src.morning } : {}),
       };
       const next = mutate(cur) || cur;
       /* only days that used treenitila carry these, as normalizeLogs writes them */
@@ -401,6 +426,16 @@ export default function App() {
           l.goal = { ...l.goal };
           delete l.goal[id];
         }
+        return l;
+      }),
+    [selKey, updateLog]
+  );
+  /* pain the morning after training: the same value again clears it */
+  const setMorning = useCallback(
+    (v) =>
+      updateLog(selKey, (l) => {
+        if (l.morning === v) delete l.morning;
+        else l.morning = v;
         return l;
       }),
     [selKey, updateLog]
@@ -639,7 +674,7 @@ export default function App() {
   /* ---- edit ops ---- */
   const setter = (which) => (which === "ex" ? setExercises : setSymptoms);
   const val = (which) => (which === "ex" ? exercises : symptoms);
-  const mutateList = (which, fn, debounced) => {
+  const mutateList = (which, fn, debounced?) => {
     const next = fn([...val(which)]);
     setter(which)(next);
     const cfg = which === "ex" ? { exercises: next, symptoms } : { exercises, symptoms: next };
@@ -649,6 +684,57 @@ export default function App() {
     mutateList(which, (arr) => arr.map((i) => (i.id === id ? { ...i, name } : i)), true);
   const setDose = (id, field, raw) =>
     mutateList("ex", (arr) => arr.map((i) => (i.id === id ? { ...i, dose: { ...i.dose, [field]: toNum(raw) } } : i)), true);
+  /* a whole target at once (quick-pick chips): one write, one timeline entry */
+  const setTarget = (id, p) => {
+    const ex = exercises.find((e) => e.id === id);
+    if (!ex) return;
+    const dose = isMin(ex)
+      ? { ...EMPTY_DOSE, min: p.min }
+      : { ...EMPTY_DOSE, sets: p.sets || null, reps: p.reps || null, hold: p.hold || null };
+    logDoseChange(ex.name, doseLabel(ex.dose, ex.unit), doseLabel(dose, ex.unit));
+    mutateList("ex", (arr) => arr.map((i) => (i.id === id ? { ...i, dose } : i)));
+  };
+  /* Replace is only ever honoured while the diary is empty — the first-run card
+     is the only place that offers it, and this is the guard if anything else
+     ever did. Merge never touches an existing exercise. */
+  const useTemplate = (id) => {
+    const tpl = TEMPLATE_BY_ID[id];
+    if (!tpl) return;
+    const mode = templateMode === "replace" && isFresh ? "replace" : "merge";
+    const res: any = applyTemplate({ exercises, symptoms }, tpl, mode, keyOf(startOfToday()));
+    (res.revived || []).forEach((r) => logDoseChange(r.name, doseLabel(r.before, r.unit), doseLabel(r.after, r.unit)));
+    setExercises(res.exercises);
+    setSymptoms(res.symptoms);
+    persistConfig(res.exercises, res.symptoms);
+    setTemplateMode(null);
+  };
+  const addProgram = (exs) => {
+    const res = mergeExercises(exercises, exs);
+    res.revived.forEach((r) => logDoseChange(r.name, doseLabel(r.before, r.unit), doseLabel(r.after, r.unit)));
+    setExercises(res.exercises);
+    persistConfig(res.exercises, symptoms);
+    setProgramImport(null);
+  };
+  /* A new phase: a milestone, optionally the current exercises archived, then
+     the chosen way of adding the new programme. */
+  const startPhase = (name, archive, next) => {
+    if (archive) {
+      const archived = archiveActive(exercises);
+      setExercises(archived);
+      persistConfig(archived, symptoms);
+    }
+    addMark(keyOf(startOfToday()), phaseMarkText(name), false);
+    setPhaseOpen(false);
+    if (next === "template") setTemplateMode("merge");
+    else if (next === "text") setProgramImport({ fromLink: null });
+  };
+  const setVideo = (id, v) =>
+    mutateList("ex", (arr) => arr.map((i) => (i.id === id ? { ...i, video: v.slice(0, 500) } : i)), true);
+  /* only the programme goes into the link: no ids, no diary */
+  const shareProgram = () => {
+    const url = `${window.location.origin}${window.location.pathname}#ohjelma=${encodeProgram(exercises)}`;
+    return shareLink(url, "Liikepäiväkirja-ohjelma");
+  };
   const setDesc = (id, desc) =>
     mutateList("ex", (arr) => arr.map((i) => (i.id === id ? { ...i, desc: desc.slice(0, 1000) } : i)), true);
   /* A frequency change is a prescription change, so it is annotated in the
@@ -688,20 +774,9 @@ export default function App() {
           let n = 2;
           while (taken.has(name.toLowerCase())) name = `${t.name} (${n++})`;
           taken.add(name.toLowerCase());
-          added.push({
-            id: uid(),
-            added: keyOf(startOfToday()),
-            name,
-            desc: t.note || "",
-            type: t.type,
-            muscles: { ...t.muscles },
-            structures: [...(t.structures || [])],
-            unit: t.unit === "min" ? "min" : "sets",
-            met: t.met || null,
-            source: { src: t.src, note: t.note || "", edited: false },
-            archived: false,
-            dose: t.dose ? { ...t.dose } : { ...EMPTY_DOSE },
-          });
+          /* a starting target instead of "ei tavoitetta": 119 of the 155
+             library exercises have none of their own */
+          added.push(exerciseFromLibrary(t, { name, todayKey: keyOf(startOfToday()) }));
         });
         const next = [...prev, ...added];
         saveJSON("physio-config", { exercises: next, symptoms: stateRef.current.symptoms || [] });
@@ -866,7 +941,7 @@ export default function App() {
         <header style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: C.pineDeep, fontWeight: 600 }}>
-              Fysioterapian seuranta
+              Harjoittelun seuranta
             </div>
             <h1 style={{ margin: "3px 0 0", fontSize: 27, fontWeight: 600, letterSpacing: "-0.02em" }}>Liikepäiväkirja</h1>
           </div>
@@ -904,6 +979,7 @@ export default function App() {
             <FirstRunCard
               onOpenHelp={() => setHelpOpen(true)}
               onGoEdit={() => setTab("edit")}
+              onTemplates={() => setTemplateMode("replace")}
               onDismiss={dismissHelp}
             />
           )}
@@ -961,6 +1037,7 @@ export default function App() {
             logs={logs}
             completeProgram={completeProgram}
             openFocus={(id) => setFocus({ startId: id })}
+            setMorning={setMorning}
             programUndo={programUndo}
             undoProgram={undoProgram}
           />
@@ -996,6 +1073,12 @@ export default function App() {
         {tab === "edit" && (
           <ErrorBoundary label="Muokkaa">
           <EditView
+            setTarget={setTarget}
+            openTemplates={() => setTemplateMode("merge")}
+            openPaste={() => setProgramImport({ fromLink: null })}
+            shareProgram={shareProgram}
+            openPhase={() => setPhaseOpen(true)}
+            setVideo={setVideo}
             exercises={exercises}
             symptoms={symptoms}
             renameItem={renameItem}
@@ -1076,6 +1159,21 @@ export default function App() {
       {importOpen && (
         <ErrorBoundary label="Tuonti" action={{ label: "Sulje", run: () => setImportOpen(false) }}>
           <ImportModal onApply={applyImport} onUndo={undoImport} canUndo={canUndoImport} onClose={() => setImportOpen(false)} />
+        </ErrorBoundary>
+      )}
+      {phaseOpen && (
+        <ErrorBoundary label="Uusi vaihe" action={{ label: "Sulje", run: () => setPhaseOpen(false) }}>
+          <PhaseModal defaultName={`Vaihe ${phaseCount(marks) + 1}`} onStart={startPhase} onClose={() => setPhaseOpen(false)} />
+        </ErrorBoundary>
+      )}
+      {programImport && (
+        <ErrorBoundary label="Ohjelman lisäys" action={{ label: "Sulje", run: () => setProgramImport(null) }}>
+          <ProgramImportModal existing={exercises} fromLink={programImport.fromLink} onAdd={addProgram} onClose={() => setProgramImport(null)} />
+        </ErrorBoundary>
+      )}
+      {templateMode && (
+        <ErrorBoundary label="Pohjat" action={{ label: "Sulje", run: () => setTemplateMode(null) }}>
+          <TemplateModal mode={templateMode === "replace" && isFresh ? "replace" : "merge"} exercises={exercises} symptoms={symptoms} onApply={useTemplate} onClose={() => setTemplateMode(null)} />
         </ErrorBoundary>
       )}
       {focus && (

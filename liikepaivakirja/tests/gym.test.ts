@@ -184,3 +184,47 @@ describe("timers", () => {
     expect(clampRest(90)).toBe(90);
   });
 });
+
+import { askMorning, morningSummary, trainedOn } from "../src/domain";
+
+describe("next-morning pain", () => {
+  const logs: any = {
+    "2026-10-01": { sets: { a: 2 }, mins: {} },
+    "2026-10-02": { sets: {}, mins: {}, morning: 3 },
+    "2026-10-03": { sets: {}, mins: {} },
+    "2026-10-04": { sets: {}, mins: {}, morning: 1 } /* no training the day before */,
+  };
+  it("is asked only on a morning after training, or once answered", () => {
+    expect(trainedOn(logs["2026-10-01"])).toBe(true);
+    expect(askMorning(logs, "2026-10-02")).toBe(true);
+    expect(askMorning(logs, "2026-10-03")).toBe(false);
+    expect(askMorning(logs, "2026-10-04")).toBe(true);
+  });
+  it("survives a load, keeps a day with only a morning answer, and reports mornings after training only", () => {
+    const back: any = normalizeLogs({ "2026-10-02": { morning: 3 }, "2026-10-05": { morning: 99 } }, {});
+    expect(back["2026-10-02"].morning).toBe(3);
+    expect(back["2026-10-05"]).toBeUndefined();
+    expect(morningSummary(logs, Object.keys(logs))).toEqual({ n: 1, mean: 3, max: 3 });
+  });
+});
+
+import { chartableExercises, exerciseSeries } from "../src/domain";
+
+describe("exercise series for the chart", () => {
+  const logs: any = {
+    "2026-10-03": { sets: { a: 1 }, detail: { a: [{ reps: 8, kg: 40, eq: "bb" }] }, pain: { a: 4 } },
+    "2026-10-01": { sets: { a: 2 }, detail: { a: [{ reps: 10, kg: 30, eq: "bb" }, { reps: 10, kg: 32.5, eq: "bb" }] } },
+    "2026-10-02": { sets: {}, pain: { b: 2 } },
+  };
+  it("is one point per day, oldest first, with the heaviest set and the pain", () => {
+    expect(exerciseSeries(logs, "a").map((p: any) => [p.date, p.top, p.pain])).toEqual([
+      ["2026-10-01", 32.5, null],
+      ["2026-10-03", 40, 4],
+    ]);
+    expect(exerciseSeries(logs, "b")).toEqual([{ date: "2026-10-02", top: null, sets: [], pain: 2 }]);
+  });
+  it("lists only exercises with something to show, most recent first", () => {
+    const exs = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    expect(chartableExercises(logs, exs).map((e: any) => e.id)).toEqual(["a", "b"]);
+  });
+});

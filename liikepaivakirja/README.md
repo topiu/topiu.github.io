@@ -358,6 +358,69 @@ Deliberately not built: left/right sides (not used), equipment profiles per
 place (per-set equipment covers "whatever is free today"), automatic
 progression and records.
 
+## Setup: pohjat, compact editor, text and links
+
+First setup used to be the heavy part: delete the example programme, find
+exercises among 155, and type a target for nearly every one (119 had none). It
+is now **pick, then adjust**:
+
+- **Valmiit pohjat** (`domain/templates.ts`): Lonkka ja nivunen, Koko keho ·
+  levytanko / käsipainot / kehonpaino, Kahvakuula perus, Juoksua tukeva, Tyhjä.
+  Library exercises with a starting target, a frequency and the equipment
+  (so treenitila opens a dumbbell template's "Romanialainen maastaveto" on
+  dumbbells, not the barbell its name suggests). On the first-run card a
+  template *replaces* the example programme — only while the diary is empty —
+  and from Muokkaa ("Pohjasta") it *adds* what is missing. The targets are
+  labelled as typical starting values, not instructions.
+- **Library additions get a starting target** (3 × 10; holds 3 × 30 s;
+  mobility 2 × 10; the library's own where it has one).
+- **Compact editor.** One line per exercise (name · target · frequency), opened
+  on tap; quick target chips (2 × 10 … 10 × 10 s, 20–60 min); description, type,
+  target areas and the video link under "Lisätiedot".
+- **Tekstinä** (`domain/programtext.ts`): paste a programme as sent — numbered
+  or bulleted lines like "Lantionnosto 3x15", "Lankku 3 x 30 s",
+  "3 x 10 x 5 s", "Kävely 30 min", "3 sarjaa 10 toistoa", "3 krt/vko",
+  "päivittäin". Indented or sentence-like lines become the previous exercise's
+  description; names are matched to the library for muscles and joints while
+  the typed name is kept. Always an editable preview first; a line with no
+  target (usually a heading) starts unticked.
+- **Ohjelmalinkki**: "Jaa ohjelma linkkinä" puts the programme — never ids,
+  never diary entries — in the URL fragment (`#ohjelma=1.…`), which browsers do
+  not send to the server. Opening such a link shows the same preview, then
+  clears the fragment.
+- **Merging revives.** An archived exercise with the same name comes back with
+  its id, so its history continues, and the target change is logged; an active
+  one is never touched; anything else is added.
+- An emptied programme ("Tyhjä") stays empty; only a missing config is seeded.
+
+**Wording.** The prescription is now **"tavoite"** (sets × reps or a hold) in
+the UI, not "annos": the app is for training as much as for rehabilitation.
+"Kuorma" was considered and rejected — treenitila and the report already use it
+for the weight lifted, and one word for two things would mislead. Code keeps the
+`dose` names; nothing stored changed.
+
+## Vaiheet, aamun kipu, liikkeen kehitys, videot
+
+- **Uusi vaihe** (Muokkaa): a milestone "Uusi vaihe: …", the current exercises
+  optionally archived (history kept), then a template or text for the new
+  programme. Exercises that continue are revived with their history. The report
+  gains a **"Tämä vaihe"** range.
+- **Eilisen treenin jälkeen**: pain this morning, 0–10, asked on Tänään only on
+  a morning after a training day (stored as `morning` on that day). With pain
+  during the exercise (treenitila) it covers the "during / next morning" pair
+  physiotherapists ask about. Report: mean and maximum over mornings after
+  training — numbers only, no thresholds.
+- **Liikkeen kehitys** (Historia): for one exercise at a time, the heaviest set
+  per session and pain during it — two small charts on one time axis, never one
+  chart with two y-scales; tap a point for its values; the same data as a list.
+  No trend line, no records.
+- **Video link** per exercise (http(s) only), "Katso video" in treenitila,
+  carried in programme links.
+
+Deliberately not built: PSFS activity suggestions in templates (PSFS is the
+person's own activities by design); per-phase adherence tables (the report's
+"Tämä vaihe" range answers the same question).
+
 ## Oireen kirjaus yhdellä napautuksella
 
 The three severity buttons are the **primary** control, sitting on the symptom's

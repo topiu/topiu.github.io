@@ -48,7 +48,7 @@ export function ResetBtn({ onClick }) {
 /* ================================================================== */
 /*  Small shared pieces                                               */
 /* ================================================================== */
-export function Card({ children, style }) {
+export function Card({ children, style }: any) {
   return (
     <div style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 16, padding: 16, marginBottom: 16, ...style }}>
       {children}
@@ -68,7 +68,7 @@ export function Empty({ children }) {
   return <div style={{ padding: "16px 12px", color: C.inkFaint, fontSize: 14 }}>{children}</div>;
 }
 
-export function Stat({ value, unit, label, accent }) {
+export function Stat({ value, unit, label, accent }: any) {
   return (
     <div style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14, padding: "14px 10px", textAlign: "center" }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 3 }}>
@@ -80,7 +80,7 @@ export function Stat({ value, unit, label, accent }) {
   );
 }
 
-export function IconBtn({ children, onClick, label, disabled }) {
+export function IconBtn({ children, onClick, label, disabled }: any) {
   return (
     <button className="tap" onClick={onClick} disabled={disabled} aria-label={label}
       style={{ width: 42, height: 42, borderRadius: 12, border: `1px solid ${C.line}`, background: C.surface, display: "flex", alignItems: "center", justifyContent: "center", color: disabled ? C.inkFaint : C.ink, opacity: disabled ? 0.5 : 1 }}>
@@ -89,7 +89,7 @@ export function IconBtn({ children, onClick, label, disabled }) {
   );
 }
 
-export function MiniBtn({ children, onClick, label, disabled, danger }) {
+export function MiniBtn({ children, onClick, label, disabled, danger }: any) {
   return (
     <button className="tap" onClick={onClick} disabled={disabled} aria-label={label}
       style={{ width: 34, height: 34, flex: "0 0 auto", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", color: disabled ? C.inkFaint : danger ? C.amber : C.inkSoft, opacity: disabled ? 0.4 : 1, background: "transparent" }}>
@@ -98,7 +98,7 @@ export function MiniBtn({ children, onClick, label, disabled, danger }) {
   );
 }
 
-export function NumField({ label, value, onChange, placeholder, exId, onDoseFocus, onDoseBlur }) {
+export function NumField({ label, value, onChange, placeholder, exId, onDoseFocus, onDoseBlur }: any) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <span style={{ fontSize: 10.5, letterSpacing: "0.04em", color: C.inkFaint, fontWeight: 700, textTransform: "uppercase" }}>{label}</span>

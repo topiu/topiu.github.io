@@ -20,7 +20,7 @@
  */
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp, HelpCircle, Info, RotateCcw, X } from "lucide-react";
+import { ChevronDown, ChevronUp, HelpCircle, Info, LayoutList, RotateCcw, X } from "lucide-react";
 import { FIRST_RUN, HELP_SECTIONS } from "../domain";
 import { BUILD_ID } from "../platform/sw";
 import { C } from "../styles/tokens";
@@ -104,7 +104,7 @@ export function HelpModal({ onClose }) {
   );
 }
 
-export function FirstRunCard({ onOpenHelp, onGoEdit, onDismiss }) {
+export function FirstRunCard({ onOpenHelp, onGoEdit, onDismiss, onTemplates }: any) {
   return (
     <div style={{ background: C.surface, border: `1px solid ${C.pineSoft}`, borderRadius: 16, padding: 15, marginBottom: 18 }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
@@ -130,11 +130,21 @@ export function FirstRunCard({ onOpenHelp, onGoEdit, onDismiss }) {
         ))}
       </ol>
 
-      <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+      {/* The fastest setup: one programme in two taps, everything editable after. */}
+      {onTemplates && (
+        <button
+          className="tap"
+          onClick={onTemplates}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginTop: 6, padding: "12px", borderRadius: 11, background: C.pine, color: "#fff", fontSize: 14.5, fontWeight: 600 }}>
+          <LayoutList size={17} /> Valitse valmis pohja
+        </button>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
         <button
           className="tap"
           onClick={onGoEdit}
-          style={{ flex: "1 1 auto", padding: "11px 12px", borderRadius: 11, background: C.pine, color: "#fff", fontSize: 14, fontWeight: 600 }}>
+          style={{ flex: "1 1 auto", padding: "11px 12px", borderRadius: 11, border: `1px solid ${C.pine}`, background: C.surface, color: C.pineDeep, fontSize: 14, fontWeight: 600 }}>
           Muokkaa liikkeet
         </button>
         <button

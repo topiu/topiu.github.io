@@ -8,7 +8,7 @@ import { Empty, IconBtn } from "./common";
 /* ================================================================== */
 /*  LIBRARY                                                            */
 /* ================================================================== */
-export function SourceBadge({ source, compact }) {
+export function SourceBadge({ source, compact }: any) {
   const meta = SOURCES[source.src];
   if (!meta) return null;
   const measured = source.src === "boren2011";
