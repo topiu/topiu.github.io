@@ -3,129 +3,219 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>topiu.github.io</title>
-    <meta name="theme-color" content="#EDF1EF" />
+    <title>Omat sovellukset</title>
+    <meta name="description" content="Pieniä selainsovelluksia omaan käyttöön. Ei asennusta eikä tiliä, ja tiedot pysyvät omalla laitteella." />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#EDF1EF" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0F1613" media="(prefers-color-scheme: dark)" />
+    <meta name="apple-mobile-web-app-title" content="Sovellukset" />
+    <link rel="icon" href="favicon.ico" sizes="32x32" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <!-- Link previews (WhatsApp, iMessage, Slack) need absolute URLs. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://topiu.github.io/" />
+    <meta property="og:title" content="Omat sovellukset" />
+    <meta property="og:description" content="Pieniä selainsovelluksia omaan käyttöön. Ei asennusta eikä tiliä, ja tiedot pysyvät omalla laitteella." />
+    <meta property="og:image" content="https://topiu.github.io/apple-touch-icon.png" />
+    <meta property="og:locale" content="fi_FI" />
     <style>
       :root {
         --bg: #edf1ef;
         --surface: #fff;
         --ink: #16241f;
-        --ink-soft: #5c6b65;
-        --ink-faint: #98a39d;
+        --ink-soft: #56655f;
+        --ink-faint: #879490;
         --line: #e0e7e3;
         --pine: #1f7a5c;
-        --pine-tint: #eaf3ef;
+        --tint: #e2ede7;
+        --lift: 0 1px 2px rgb(22 36 31 / 0.05);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1613;
+          --surface: #18221e;
+          --ink: #e3ebe7;
+          --ink-soft: #a3b3ab;
+          --ink-faint: #62726a;
+          --line: #26332d;
+          --pine: #62c7a0;
+          --tint: #16271f;
+          --lift: none;
+        }
       }
       * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; }
       body {
         margin: 0;
-        padding: 48px 20px 64px;
         background: var(--bg);
         color: var(--ink);
         font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
           "Helvetica Neue", Arial, sans-serif;
         -webkit-font-smoothing: antialiased;
       }
-      main { max-width: 560px; margin: 0 auto; }
-      h1 {
-        margin: 0 0 4px;
-        font-size: 26px;
-        letter-spacing: -0.02em;
-        font-weight: 600;
+      main {
+        max-width: 560px;
+        margin: 0 auto;
+        padding: 48px max(20px, env(safe-area-inset-right)) 56px max(20px, env(safe-area-inset-left));
       }
-      .sub { margin: 0 0 32px; color: var(--ink-soft); font-size: 14px; }
-      ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-      a.card {
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+        font-weight: 650;
+      }
+      .intro { margin: 0 0 28px; color: var(--ink-soft); font-size: 15px; }
+      .apps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+      .card {
         display: flex;
         align-items: center;
         gap: 14px;
-        padding: 16px 18px;
+        padding: 14px 16px;
         background: var(--surface);
         border: 1px solid var(--line);
-        border-radius: 14px;
-        text-decoration: none;
+        border-radius: 16px;
+        box-shadow: var(--lift);
         color: inherit;
-        transition: border-color 0.15s ease, transform 0.15s ease;
+        text-decoration: none;
+        transition: border-color 0.15s ease, transform 0.1s ease;
+        -webkit-tap-highlight-color: transparent;
       }
-      a.card:hover, a.card:focus-visible {
-        border-color: var(--pine);
-        transform: translateY(-1px);
-      }
-      .dot {
-        flex: none;
-        width: 34px;
-        height: 34px;
-        border-radius: 10px;
-        background: var(--pine-tint);
-        color: var(--pine);
+      .card:active { transform: scale(0.985); }
+      .card:focus-visible { outline: 2px solid var(--pine); outline-offset: 2px; }
+      /* hover only where it exists: on touch screens it sticks after a tap */
+      @media (hover: hover) { .card:hover { border-color: var(--pine); } }
+      .icon { flex: none; width: 48px; height: 48px; border-radius: 11px; }
+      .initials {
         display: grid;
         place-items: center;
-        font-weight: 600;
-        font-size: 15px;
+        background: #1f7a5c;
+        color: #fff;
+        font-weight: 650;
+        font-size: 19px;
       }
-      .name { font-weight: 550; }
-      .path { color: var(--ink-faint); font-size: 13px; font-variant-numeric: tabular-nums; }
-      .arrow { margin-left: auto; color: var(--ink-faint); }
-      .note { margin-top: 28px; font-size: 13px; color: var(--ink-faint); }
+      .text { flex: 1; min-width: 0; }
+      .name { display: block; font-weight: 600; }
+      .desc { display: block; margin-top: 1px; color: var(--ink-soft); font-size: 14px; line-height: 1.45; }
+      .arrow { flex: none; color: var(--ink-faint); font-size: 18px; }
       .empty {
-        padding: 20px 18px;
+        padding: 18px;
         border: 1px dashed var(--line);
-        border-radius: 14px;
-        color: var(--ink-faint);
-        font-size: 14px;
+        border-radius: 16px;
         background: var(--surface);
+        color: var(--ink-soft);
+        font-size: 14px;
+      }
+      .note { margin-top: 28px; padding: 16px 18px; border-radius: 16px; background: var(--tint); }
+      .note h2 { margin: 0 0 4px; font-size: 15px; font-weight: 650; }
+      .note p { margin: 0; color: var(--ink-soft); font-size: 14px; line-height: 1.5; }
+      footer { margin-top: 24px; color: var(--ink-soft); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+      footer a {
+        color: var(--pine);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12.5px;
+        text-underline-offset: 2px;
       }
     </style>
   </head>
   <body>
     <main>
-      <h1>topiu.github.io</h1>
-      <p class="sub">Sovellukset</p>
-      <ul id="apps"><li class="empty">Ladataan…</li></ul>
-      <p class="note" id="built"></p>
+      <h1>Omat sovellukset</h1>
+      <p class="intro">
+        Pieniä selainsovelluksia omaan käyttöön. Ne toimivat suoraan selaimessa
+        ilman asennusta tai tiliä, ja ne voi lisätä puhelimen aloitusnäytölle.
+      </p>
+
+      <ul class="apps" id="apps"><li class="empty">Ladataan…</li></ul>
+
+      <section class="note" aria-labelledby="data-heading">
+        <h2 id="data-heading">Tiedot pysyvät tällä laitteella</h2>
+        <p>
+          Sovellukset eivät lähetä tietoja minnekään, vaan kaikki tallentuu tämän
+          laitteen selaimeen. Kääntöpuoli: jos tyhjennät selaimen sivustotiedot tai
+          vaihdat laitetta, kaikkien sovellusten tiedot katoavat kerralla. Pidä siis
+          kopio tiedostona sovelluksen omalla varmuuskopiotoiminnolla.
+        </p>
+      </section>
+
+      <footer id="built"></footer>
     </main>
 
     <script>
-      /* apps.json is generated by the deploy workflow from the folders it built,
-         so this list never goes stale when a new app is added. */
-      const TITLES = { liikepaivakirja: "Liikepäiväkirja" };
+      /* apps.json is written at deploy time by .github/scripts/apps-json.mjs from
+         each app's own index.html, so this page needs no per-app configuration. */
+      const PAGE_LANG = document.documentElement.lang;
 
-      function initials(name) {
-        return name.replace(/[^a-zA-ZäöåÄÖÅ]/g, "").slice(0, 2).toUpperCase();
+      function el(tag, props, ...children) {
+        const node = Object.assign(document.createElement(tag), props);
+        node.append(...children);
+        return node;
+      }
+
+      function decorative(node) {
+        node.setAttribute("aria-hidden", "true");
+        return node;
+      }
+
+      function icon(app) {
+        const initials = () =>
+          decorative(el("span", { className: "icon initials", textContent: [...app.name.trim()][0] || "" }));
+        if (!app.icon) return initials();
+        const img = el("img", { className: "icon", src: app.icon, alt: "", width: 48, height: 48, decoding: "async" });
+        img.addEventListener("error", () => img.replaceWith(initials()), { once: true });
+        return img;
+      }
+
+      function card(app) {
+        const text = el("span", { className: "text" }, el("span", { className: "name", textContent: app.name }));
+        if (app.description) text.append(el("span", { className: "desc", textContent: app.description }));
+        const link = el(
+          "a",
+          { className: "card", href: app.id + "/" },
+          icon(app),
+          text,
+          decorative(el("span", { className: "arrow", textContent: "→" })),
+        );
+        if (app.lang && app.lang !== PAGE_LANG) link.lang = app.lang;
+        return el("li", {}, link);
+      }
+
+      /* Which deploy is live, so a deploy run from the phone can be checked here
+         at a glance, the way BUILD_ID is checked inside an app. */
+      function footer({ built, commit }) {
+        const foot = document.getElementById("built");
+        if (built) {
+          const when = new Date(built).toLocaleString("fi-FI", { dateStyle: "medium", timeStyle: "short" });
+          foot.append(el("div", { textContent: "Julkaistu " + when }));
+        }
+        if (commit && commit.sha) {
+          const sha = commit.sha.slice(0, 7);
+          foot.append(
+            el("div", {}, commit.url ? el("a", { href: commit.url, textContent: sha }) : sha,
+              commit.subject ? " · " + commit.subject : ""),
+          );
+        }
       }
 
       (async () => {
-        const ul = document.getElementById("apps");
+        const list = document.getElementById("apps");
+        const say = (text) => list.replaceChildren(el("li", { className: "empty", textContent: text }));
+        let data;
         try {
           const res = await fetch("apps.json", { cache: "no-cache" });
-          if (!res.ok) throw new Error(res.status);
-          const data = await res.json();
-          const apps = data.apps || [];
-          if (!apps.length) {
-            ul.innerHTML = '<li class="empty">Ei julkaistuja sovelluksia.</li>';
-            return;
-          }
-          ul.innerHTML = "";
-          for (const app of apps) {
-            const li = document.createElement("li");
-            const a = document.createElement("a");
-            a.className = "card";
-            a.href = app + "/";
-            a.innerHTML =
-              '<span class="dot">' + initials(app) + "</span>" +
-              '<span><span class="name">' + (TITLES[app] || app) + "</span><br>" +
-              '<span class="path">/' + app + "/</span></span>" +
-              '<span class="arrow">→</span>';
-            li.appendChild(a);
-            ul.appendChild(li);
-          }
-          if (data.built) {
-            document.getElementById("built").textContent =
-              "Julkaistu " + new Date(data.built).toLocaleString("fi-FI");
-          }
+          if (!res.ok) throw new Error(String(res.status));
+          data = await res.json();
         } catch {
-          ul.innerHTML = '<li class="empty">Sovelluslistaa ei voitu ladata.</li>';
+          say("Sovelluslistaa ei voitu ladata.");
+          return;
         }
+        /* deploys from before apps.json carried metadata listed bare folder names */
+        const apps = (data.apps || []).map((a) => (typeof a === "string" ? { id: a } : a));
+        for (const a of apps) a.name = a.name || a.id;
+        if (apps.length) list.replaceChildren(...apps.map(card));
+        else say("Ei julkaistuja sovelluksia.");
+        footer(data);
       })();
     </script>
   </body>
