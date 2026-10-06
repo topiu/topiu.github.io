@@ -28,6 +28,8 @@ export type TemplateItem = { lib: string; dose: Dose; freq?: number; equip?: str
 export type Template = {
   id: string;
   name: string;
+  /* the group label its exercises get; merges with an existing group of the same name */
+  group?: string;
   blurb: string;
   items: TemplateItem[];
   symptoms: { name: string; regions?: Record<string, string>; structures?: Record<string, string> }[];
@@ -40,6 +42,7 @@ const mins = (m, freq = 3) => ({ dose: { min: m }, freq });
 export const TEMPLATES: Template[] = [
   {
     id: "hip",
+    group: "Lonkka ja nivunen",
     name: "Lonkka ja nivunen",
     blurb: "Kuntoutus: pakaran ja lähentäjien vahvistus, keskivartalo, venyttely.",
     items: [
@@ -59,6 +62,7 @@ export const TEMPLATES: Template[] = [
   },
   {
     id: "bb",
+    group: "Levytanko",
     name: "Koko keho · levytanko",
     blurb: "Perusliikkeet tangolla, 3 × viikossa.",
     items: [
@@ -76,6 +80,7 @@ export const TEMPLATES: Template[] = [
   },
   {
     id: "db",
+    group: "Käsipainot",
     name: "Koko keho · käsipainot",
     blurb: "Koko keho kahdella käsipainolla, 3 × viikossa.",
     items: [
@@ -93,6 +98,7 @@ export const TEMPLATES: Template[] = [
   },
   {
     id: "bw",
+    group: "Kehonpaino",
     name: "Koko keho · kehonpaino",
     blurb: "Ilman välineitä, kotona tai matkalla, 3 × viikossa.",
     items: [
@@ -108,6 +114,7 @@ export const TEMPLATES: Template[] = [
   },
   {
     id: "kb",
+    group: "Kahvakuula",
     name: "Kahvakuula perus",
     blurb: "Yksi kuula riittää: heilautus, kyykky, soutu, punnerrus.",
     items: [
@@ -126,6 +133,7 @@ export const TEMPLATES: Template[] = [
   },
   {
     id: "run",
+    group: "Juoksu",
     name: "Juoksua tukeva",
     blurb: "Pohkeet, pakarat ja keskivartalo juoksun tueksi, sekä itse juoksu.",
     items: [
@@ -169,7 +177,7 @@ export function defaultTargetFor(lib) {
 }
 
 /* An exercise built from a library entry, the same shape addFromLibrary makes. */
-export function exerciseFromLibrary(lib, { dose, freq, equip, name, todayKey }: any = {}) {
+export function exerciseFromLibrary(lib, { dose, freq, equip, name, todayKey, groups }: any = {}) {
   return {
     id: uid(),
     added: todayKey || null,
@@ -184,6 +192,7 @@ export function exerciseFromLibrary(lib, { dose, freq, equip, name, todayKey }: 
     archived: false,
     freq: freq || FREQ_DAILY,
     equip: EQUIP_IDS.includes(equip) ? equip : null,
+    groups: Array.isArray(groups) ? groups.filter(Boolean) : [],
     dose: dose ? { ...EMPTY_DOSE, ...dose } : defaultTargetFor(lib),
   };
 }
@@ -192,7 +201,7 @@ export function templateExercises(tpl: Template, todayKey?: string) {
   return tpl.items
     .map((it) => {
       const lib = LIB_BY_ID[it.lib];
-      return lib ? exerciseFromLibrary(lib, { ...it, todayKey }) : null;
+      return lib ? exerciseFromLibrary(lib, { ...it, todayKey, groups: tpl.group ? [tpl.group] : [] }) : null;
     })
     .filter(Boolean);
 }

@@ -50,7 +50,8 @@ describe("templates", () => {
     const kb = TEMPLATES.find((t) => t.id === "kb")!;
     const mine = { id: "keep", name: "kahvakuulaheilautus", dose: { sets: 5, reps: 20 }, archived: false };
     const r = applyTemplate({ exercises: [mine], symptoms: [] }, kb, "merge");
-    expect(r.exercises[0]).toBe(mine); /* same object, untouched */
+    /* the prescription untouched; only the template's group label is added */
+    expect(r.exercises[0]).toMatchObject({ id: "keep", archived: false, dose: { sets: 5, reps: 20 }, groups: ["Kahvakuula"] });
     expect(r.skipped).toBe(1);
     expect(r.added).toBe(kb.items.length - 1);
   });

@@ -399,6 +399,37 @@ the UI, not "annos": the app is for training as much as for rehabilitation.
 for the weight lifted, and one word for two things would mislead. Code keeps the
 `dose` names; nothing stored changed.
 
+## Ryhmät
+
+Group labels on exercises (`groups: ["Sali A"]`, `domain/groups.ts`) so a gym
+day shows only that day's exercises.
+
+- **A view, not a prescription.** Groups never change "done", adherence, weekly
+  targets or the report.
+- **Labels, not a list.** One exercise can be in several groups (a shared
+  warm-up); the list of groups is derived from the exercises, so there is no
+  second list to keep in step, and labels travel with export, snapshots,
+  restore and programme links because they live on the exercise. Names match
+  regardless of case: renaming a group onto an existing one merges them.
+- **Tänään:** a "Kaikki · Sali A · …" row, shown only once a group exists;
+  it narrows the list and "Merkitse ohjelma tehdyksi" fills only the group
+  shown. It starts at "Kaikki" on each visit; the day's ring still counts
+  everything.
+- **Treenitila:** the same row; dots, swipe and "Seuraava" stay inside the
+  group. It opens on Tänään's filter if one is set, else on the last group used
+  (a device preference in `physio-ui`).
+- **Muokkaa:** chips and "+ Uusi ryhmä" in an opened exercise; a "Ryhmät" row
+  where tapping a group renames or deletes it (tap rather than long-press:
+  long-press is undiscoverable on iOS and fights text selection). Deleting a
+  group removes only the label.
+- **Templates bring their group** ("Kahvakuula", "Levytanko", …). Merging into
+  a programme that already has a group of that name joins it, and an exercise
+  the programme already had gets the label added — its target untouched.
+
+Deliberately not built: groups tied to weekdays (planning future days, see
+"Not included"), and a separate exercise order per group (the programme order
+is used; it can be added later without changing the data).
+
 ## Vaiheet, aamun kipu, liikkeen kehitys, videot
 
 - **Uusi vaihe** (Muokkaa): a milestone "Uusi vaihe: …", the current exercises

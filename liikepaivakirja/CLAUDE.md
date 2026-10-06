@@ -79,7 +79,7 @@ pristine clone before and after a change, and keep it from growing.
 
 ```
 src/domain/    pure logic — no React, no platform APIs, heavily tested
-               backup dates defaults dose exportfmt freq gym help library
+               backup dates defaults dose exportfmt freq groups gym help library
                load morning normalize num phase programtext psfs regions
                report reportview restore steps structures swipe taxonomy
                templates                            (+ index.ts barrel)

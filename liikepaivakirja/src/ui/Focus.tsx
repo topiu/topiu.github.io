@@ -24,6 +24,7 @@ import {
   doseLabel,
   emptyLog,
   equipLabel,
+  filterByGroup,
   fmtClock,
   fmtKg,
   freqLabel,
@@ -47,9 +48,17 @@ import {
 import { holdWakeLock } from "../platform/wakelock";
 import { beep, unlockSound } from "../platform/sound";
 import { C } from "../styles/tokens";
+import { GroupChips } from "./common";
 
-export function FocusView({ exercises, logs, dateKey, todayKey, startId, restSec, onRestSec, onLogSet, onRemoveSet, onSetMins, onPain, onClose }) {
-  const [idx, setIdx] = useState(() => Math.max(0, exercises.findIndex((e) => e.id === startId)));
+export function FocusView({ exercises: all, groups, group, onGroup, logs, dateKey, todayKey, startId, restSec, onRestSec, onLogSet, onRemoveSet, onSetMins, onPain, onClose }: any) {
+  /* a gym day shows its group only: dots, swipe and "Seuraava" stay inside it */
+  const exercises = filterByGroup(all, group);
+  const [idx, setIdx] = useState(() => {
+    const i = exercises.findIndex((e) => e.id === startId);
+    if (i >= 0) return i;
+    const day = logs[dateKey];
+    return Math.max(0, exercises.findIndex((e) => !isCompleteOn(day, e)));
+  });
   const ex = exercises[Math.min(idx, exercises.length - 1)];
   const log = logs[dateKey] || emptyLog();
 
@@ -186,6 +195,20 @@ export function FocusView({ exercises, logs, dateKey, todayKey, startId, restSec
         </button>
       </div>
 
+      {onGroup && groups && groups.length > 0 && (
+        <GroupChips
+          groups={groups}
+          value={group}
+          onChange={(g) => {
+            onGroup(g);
+            /* start the new group at its first exercise not yet done */
+            const list = filterByGroup(all, g);
+            const i = list.findIndex((e) => !isCompleteOn(log, e));
+            setIdx(Math.max(0, i));
+          }}
+          style={{ padding: "0 16px 8px" }}
+        />
+      )}
       {/* progress: one dot per exercise, tap to jump */}
       <div style={{ display: "flex", justifyContent: "center", gap: 6, flexWrap: "wrap", padding: "0 16px 6px" }}>
         {exercises.map((e, i) => (
