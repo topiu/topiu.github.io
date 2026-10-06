@@ -55,12 +55,11 @@ jobs:
           cache: npm
           cache-dependency-path: '**/package-lock.json'
 
-      # Before the build on purpose. This is what tells Pages to serve the
-      # Actions artifact rather than the repository branch. If it ran after the
-      # build and the build failed, the source could stay on branch serving —
-      # which publishes the *unbuilt* index.html, whose script tag points at
-      # /src/main.tsx and 404s. Running it first means a failed build leaves the
-      # previous good deployment in place instead.
+      # Reads the Pages configuration; it does NOT switch the source. Settings →
+      # Pages → Source must say "GitHub Actions". On "Deploy from a branch",
+      # GitHub's own "pages build and deployment" races this workflow on every
+      # push and can publish the raw branch — whose index.html points at
+      # /src/main.tsx and 404s — over a green deploy (it did on 2026-10-06).
       - uses: actions/configure-pages@v6
 
       # Builds or copies every app into _site/ and writes apps.json.
