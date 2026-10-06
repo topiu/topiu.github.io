@@ -28,7 +28,7 @@ const MIN_PRESETS = [
   { label: "60 min", min: 60 },
 ];
 
-export function EditView({ openPhase, setVideo, openPaste, shareProgram, setTarget, openTemplates, exercises, symptoms, renameItem, setDose, setFreq, setDesc, setExType, cycleExMuscle, toggleSymRegion, toggleExStructure, toggleSymStructure, addItem, removeItem, moveItem, resetList, archiveItem, addFromLibrary, logDoseChange }) {
+export function EditView({ groups = [], toggleExGroup, renameGroup, deleteGroup, openPhase, setVideo, openPaste, shareProgram, setTarget, openTemplates, exercises, symptoms, renameItem, setDose, setFreq, setDesc, setExType, cycleExMuscle, toggleSymRegion, toggleExStructure, toggleSymStructure, addItem, removeItem, moveItem, resetList, archiveItem, addFromLibrary, logDoseChange }) {
   const [exDraft, setExDraft] = useState("");
   const [syDraft, setSyDraft] = useState("");
   const [picker, setPicker] = useState(null); // { kind:'ex'|'sy', id }
@@ -36,6 +36,10 @@ export function EditView({ openPhase, setVideo, openPaste, shareProgram, setTarg
   const [openId, setOpenId] = useState(null);
   const [moreId, setMoreId] = useState(null);
   const [shared, setShared] = useState("");
+  /* group being managed (rename / delete), and the "+ Uusi ryhmä" draft per card */
+  const [manage, setManage] = useState(null);
+  const [rename, setRename] = useState("");
+  const [newGroup, setNewGroup] = useState("");
   /* snapshot dose label when a dose field gains focus; compare on blur */
   const doseSnap = useRef({});
   const exercisesRef = useRef(exercises);
@@ -82,6 +86,34 @@ export function EditView({ openPhase, setVideo, openPaste, shareProgram, setTarg
           </button>
         )}
       </div>
+      {groups.length > 0 && renameGroup && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, overflowX: "auto", paddingBottom: 2 }}>
+            <span style={{ flex: "0 0 auto", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: C.inkSoft, fontWeight: 700, marginRight: 2 }}>Ryhmät</span>
+            {groups.map((g) => (
+              <button key={g} className="tap" onClick={() => { setManage(manage === g ? null : g); setRename(g); }} aria-pressed={manage === g} aria-label={`Muokkaa ryhmää ${g}`}
+                style={{ flex: "0 0 auto", fontSize: 12.5, fontWeight: 600, padding: "5px 11px", borderRadius: 999, border: `1px solid ${manage === g ? C.pine : C.line}`, background: manage === g ? C.pineTint : C.surface, color: C.inkSoft, whiteSpace: "nowrap" }}>
+                {g}
+              </button>
+            ))}
+          </div>
+          {manage && groups.includes(manage) && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+              <input value={rename} onChange={(ev) => setRename(ev.target.value)} aria-label="Ryhmän nimi" maxLength={40}
+                style={{ flex: "1 1 140px", minWidth: 0, border: `1px solid ${C.line}`, borderRadius: 10, padding: "8px 10px", fontSize: 14, color: C.ink, outline: "none", background: C.surface }} />
+              <button className="tap" onClick={() => { if (rename.trim()) renameGroup(manage, rename); setManage(null); }}
+                style={{ padding: "8px 12px", borderRadius: 10, background: C.pine, color: "#fff", fontSize: 13, fontWeight: 600 }}>Tallenna</button>
+              <button className="tap" onClick={() => { deleteGroup(manage); setManage(null); }}
+                style={{ padding: "8px 12px", borderRadius: 10, border: `1px solid ${C.line}`, background: C.surface, color: C.amber, fontSize: 13, fontWeight: 600 }}>Poista ryhmä</button>
+            </div>
+          )}
+          {manage && (
+            <div style={{ fontSize: 11.5, color: C.inkFaint, margin: "4px 2px 0" }}>
+              Ryhmä on vain näkymä: poistaminen ei poista liikkeitä eikä merkintöjä. Samanniminen ryhmä yhdistyy.
+            </div>
+          )}
+        </div>
+      )}
       {/* Compact by default: one line per exercise — name, target, frequency —
           and the full editor only for the one being changed. Every card used to
           be fully open (three dose fields, frequency, description, five type
@@ -91,7 +123,7 @@ export function EditView({ openPhase, setVideo, openPaste, shareProgram, setTarg
         {exercises.filter((e) => !e.archived).map((e, i) => {
           const open = openId === e.id;
           const target = doseLabel(e.dose, e.unit);
-          const summary = [target || "ei tavoitetta", freqOf(e) < FREQ_DAILY ? freqLabel(freqOf(e)) : ""].filter(Boolean).join(" · ");
+          const summary = [target || "ei tavoitetta", freqOf(e) < FREQ_DAILY ? freqLabel(freqOf(e)) : "", (e.groups || []).join(", ")].filter(Boolean).join(" · ");
           if (!open) {
             return (
               <button key={e.id} className="tap" onClick={() => { setOpenId(e.id); setMoreId(null); }} aria-label={`Muokkaa: ${e.name}`}
@@ -142,6 +174,26 @@ export function EditView({ openPhase, setVideo, openPaste, shareProgram, setTarg
               </span>
             </div>
             <FreqField value={freqOf(e)} onChange={(v) => setFreq(e.id, v)} />
+            {toggleExGroup && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 10.5, letterSpacing: "0.04em", color: C.inkFaint, fontWeight: 700, textTransform: "uppercase", marginBottom: 5 }}>Ryhmät</div>
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
+                  {groups.map((g) => {
+                    const on = (e.groups || []).includes(g);
+                    return (
+                      <button key={g} className="tap" onClick={() => toggleExGroup(e.id, g)} aria-pressed={on}
+                        style={{ fontSize: 12.5, fontWeight: 600, padding: "5px 10px", borderRadius: 999, border: `1px solid ${on ? C.pine : C.line}`, background: on ? C.pine : C.surface, color: on ? "#fff" : C.inkSoft }}>
+                        {g}
+                      </button>
+                    );
+                  })}
+                  <input value={newGroup} onChange={(ev) => setNewGroup(ev.target.value)} placeholder="+ Uusi ryhmä" aria-label="Uusi ryhmä" maxLength={40}
+                    onKeyDown={(ev) => { if (ev.key === "Enter" && newGroup.trim()) { toggleExGroup(e.id, newGroup.trim()); setNewGroup(""); } }}
+                    onBlur={() => { if (newGroup.trim()) { toggleExGroup(e.id, newGroup.trim()); setNewGroup(""); } }}
+                    style={{ width: 130, border: `1px dashed ${C.line}`, borderRadius: 999, padding: "5px 10px", fontSize: 12.5, color: C.ink, outline: "none", background: C.surface }} />
+                </div>
+              </div>
+            )}
             <button className="tap" onClick={() => setMoreId(moreId === e.id ? null : e.id)} aria-expanded={moreId === e.id}
               style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 10, fontSize: 13, fontWeight: 600, color: C.pineDeep }}>
               {moreId === e.id ? <ChevronUp size={15} /> : <ChevronDown size={15} />} Lisätiedot

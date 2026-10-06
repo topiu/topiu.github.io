@@ -7,6 +7,7 @@ import { toNum, uid } from "./num";
 import { normalizePsfs } from "./psfs";
 import { EQUIP_IDS, normalizeDetail, normalizePain } from "./gym";
 import { normalizeMorning } from "./morning";
+import { normalizeGroups } from "./groups";
 import { REGION_BY_ID } from "./regions";
 import { STRUCT_BY_ID } from "./structures";
 import { EX_TYPE_IDS, QUALITY_IDS } from "./taxonomy";
@@ -29,6 +30,8 @@ export function normalizeExercises(arr) {
     archived: !!(e && e.archived),
     /* equipment treenitila opens on before there is any history; from templates */
     equip: e && EQUIP_IDS.includes(e.equip) ? e.equip : null,
+    /* group labels ("Sali A"); a view only, never part of "done" */
+    groups: normalizeGroups(e && e.groups),
     /* a demonstration video; only http(s) links survive, so nothing else can be opened */
     video: e && typeof e.video === "string" && /^https?:\/\/\S+$/i.test(e.video.trim()) ? e.video.trim().slice(0, 500) : "",
     /* day the exercise was added, so the report does not count the days before

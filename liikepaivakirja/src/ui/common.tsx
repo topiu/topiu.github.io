@@ -139,3 +139,22 @@ export function Style() {
     />
   );
 }
+
+/* "Kaikki · Sali A · Sali B": one row, scrolls sideways rather than wrapping,
+   so a long list of groups never costs more than one line. Hidden when there
+   are no groups — a control that does nothing is not shown. */
+export function GroupChips({ groups, value, onChange, style }: any) {
+  if (!groups || !groups.length) return null;
+  const chip = (label, active, onClick) => (
+    <button key={label} className="tap" onClick={onClick} aria-pressed={active}
+      style={{ flex: "0 0 auto", fontSize: 13, fontWeight: 600, padding: "6px 12px", borderRadius: 999, border: `1px solid ${active ? C.pine : C.line}`, background: active ? C.pine : C.surface, color: active ? "#fff" : C.inkSoft, whiteSpace: "nowrap" }}>
+      {label}
+    </button>
+  );
+  return (
+    <div role="group" aria-label="Ryhmä" style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2, ...style }}>
+      {chip("Kaikki", !value, () => onChange(null))}
+      {groups.map((g) => chip(g, value === g, () => onChange(g)))}
+    </div>
+  );
+}

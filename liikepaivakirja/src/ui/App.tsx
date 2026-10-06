@@ -1,6 +1,6 @@
 /* ui/App — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { EMPTY_DOSE, FREQ_DAILY, doseLabel, LIB_BY_ID, addDays, datasetToValues, doseSnapshotOf, clampRest, emptyLog, emptyPsfs, expectedSessions, freqLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizePsfs, normalizeSetEntry, normalizeSymptoms, psfsAddActivity, psfsForgetActivity, psfsRenameActivity, psfsRetireActivity, psfsSetScore, exerciseFromLibrary, applyTemplate, TEMPLATE_BY_ID, decodeProgram, encodeProgram, mergeExercises, programFromHash, archiveActive, phaseCount, phaseMarkText, resetToDefaults, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid, usedIdsInLogs, weekProgress } from "../domain";
+import { EMPTY_DOSE, FREQ_DAILY, doseLabel, LIB_BY_ID, addDays, datasetToValues, doseSnapshotOf, clampRest, emptyLog, emptyPsfs, expectedSessions, freqLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isEmptyLog, isMin, keyOf, normalizeExercises, normalizeLogs, normalizeMarks, normalizePsfs, normalizeSetEntry, normalizeSymptoms, psfsAddActivity, psfsForgetActivity, psfsRenameActivity, psfsRetireActivity, psfsSetScore, exerciseFromLibrary, applyTemplate, TEMPLATE_BY_ID, decodeProgram, encodeProgram, mergeExercises, programFromHash, archiveActive, phaseCount, phaseMarkText, groupsOf, inGroup, validGroup, toggleGroup, renameGroup, deleteGroup, resetToDefaults, seedExercises, seedSymptoms, startOfToday, targetSets, toNum, uid, usedIdsInLogs, weekProgress } from "../domain";
 import { flushSync } from "react-dom";
 import { hasStore, loadJSON, loadJSONStrict, onFlush, saveJSON, saveJSONDebounced, saveManyNow, subscribeWriteStatus } from "../storage/store";
 import { preRestoreSnapshot, prune as pruneSnapshots } from "../storage/backup";
@@ -51,6 +51,10 @@ export default function App() {
   /* programme from text or from a link: { fromLink: exercises | null } */
   const [programImport, setProgramImport] = useState<any>(null);
   const [phaseOpen, setPhaseOpen] = useState(false);
+  /* Group filters. Tänään's is for this visit only (it starts at "Kaikki");
+     treenitila remembers the last group as a device preference. */
+  const [todayGroupPick, setTodayGroup] = useState<any>(null);
+  const [focusGroupPick, setFocusGroupPick] = useState<any>(null);
   const [restSec, setRestSec] = useState(clampRest(undefined));
   const uiRef = useRef<any>({});
   const undoTimer = useRef<any>(null);
@@ -143,6 +147,7 @@ export default function App() {
       setHelpDismissed(!!(ui && ui.helpDismissed));
       uiRef.current = ui && typeof ui === "object" ? ui : {};
       setRestSec(clampRest(uiRef.current.restSec));
+      setFocusGroupPick(typeof uiRef.current.focusGroup === "string" ? uiRef.current.focusGroup : null);
       /* A programme link ("#ohjelma=…") opens its preview once the diary has
          loaded. The fragment is then removed, so a reload does not ask again;
          it never reached the server in the first place. */
@@ -477,7 +482,7 @@ export default function App() {
      It never reduces a value, so a deliberate overdrive entry survives, and it
      skips anything whose weekly target is already met — the button is for
      removing friction, not for talking you into extra sessions. */
-  const completeProgram = useCallback(() => {
+  const completeProgram = useCallback((group?) => {
     const cur = logs[selKey] || emptyLog();
 
     /* Decide everything here, synchronously, against the committed log. The
@@ -490,6 +495,8 @@ export default function App() {
     let filled = 0;
     exercises.forEach((ex) => {
       if (ex.archived) return;
+      /* with a group shown on Tänään, the button fills only that group */
+      if (!inGroup(ex, group)) return;
       if (isCompleteOn(cur, ex)) return;
       if (weekProgress(logs, ex, selKey).met) return;
       const snap = (cur.goal && cur.goal[ex.id]) || doseSnapshotOf(ex);
@@ -728,6 +735,21 @@ export default function App() {
     if (next === "template") setTemplateMode("merge");
     else if (next === "text") setProgramImport({ fromLink: null });
   };
+  /* group labels: a view, so no timeline entry */
+  const toggleExGroup = (id, name) =>
+    mutateList("ex", (arr) => arr.map((i) => (i.id === id ? { ...i, groups: toggleGroup(i.groups, name) } : i)));
+  const renameGroupAll = (from, to) => {
+    mutateList("ex", (arr) => renameGroup(arr, from, to));
+    if (todayGroupPick === from) setTodayGroup(to);
+  };
+  const deleteGroupAll = (name) => {
+    mutateList("ex", (arr) => deleteGroup(arr, name));
+    if (todayGroupPick === name) setTodayGroup(null);
+  };
+  const setFocusGroup = (g) => {
+    setFocusGroupPick(g);
+    saveUi({ focusGroup: g });
+  };
   const setVideo = (id, v) =>
     mutateList("ex", (arr) => arr.map((i) => (i.id === id ? { ...i, video: v.slice(0, 500) } : i)), true);
   /* only the programme goes into the link: no ids, no diary */
@@ -871,6 +893,11 @@ export default function App() {
     setter(which)(next);
     which === "ex" ? persistConfig(next, symptoms) : persistConfig(exercises, next);
   };
+
+  /* ---- groups: derived from the exercises; a stale choice reads as "Kaikki" ---- */
+  const groupList = groupsOf(exercises);
+  const todayGroup = validGroup(exercises, todayGroupPick);
+  const focusGroup = validGroup(exercises, focusGroupPick);
 
   /* ---- derived stats ---- */
   const activeExercises = useMemo(() => exercises.filter((e) => !e.archived), [exercises]);
@@ -1036,7 +1063,14 @@ export default function App() {
             psfsForget={psfsForget}
             logs={logs}
             completeProgram={completeProgram}
-            openFocus={(id) => setFocus({ startId: id })}
+            openFocus={(id) => {
+              /* an explicit filter on Tänään wins over the remembered one */
+              if (todayGroup) setFocusGroup(todayGroup);
+              setFocus({ startId: id });
+            }}
+            groups={groupList}
+            group={todayGroup}
+            setGroup={setTodayGroup}
             setMorning={setMorning}
             programUndo={programUndo}
             undoProgram={undoProgram}
@@ -1078,6 +1112,10 @@ export default function App() {
             openPaste={() => setProgramImport({ fromLink: null })}
             shareProgram={shareProgram}
             openPhase={() => setPhaseOpen(true)}
+            groups={groupList}
+            toggleExGroup={toggleExGroup}
+            renameGroup={renameGroupAll}
+            deleteGroup={deleteGroupAll}
             setVideo={setVideo}
             exercises={exercises}
             symptoms={symptoms}
@@ -1186,6 +1224,9 @@ export default function App() {
             startId={focus.startId}
             restSec={restSec}
             onRestSec={changeRest}
+            groups={groupList}
+            group={focusGroup}
+            onGroup={setFocusGroup}
             onLogSet={logGymSet}
             onRemoveSet={removeGymSet}
             onSetMins={setExerciseMins}

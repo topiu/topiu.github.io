@@ -1,10 +1,10 @@
 /* ui/Today — moved verbatim from liikepaivakirja.jsx (Phase 1 split). */
 import { useState, useEffect, useRef } from "react";
 import { ChevronLeft, ChevronRight, Check, CheckCheck, Dumbbell, Plus, Minus, X, Zap, HelpCircle, RotateCcw } from "lucide-react";
-import { FREQ_DAILY, PAIN_MAX, QUALITIES, SEVERITY, WD_LONG, addDays, askMorning, dayDoseOf, doseLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isMin, weekProgress } from "../domain";
+import { FREQ_DAILY, PAIN_MAX, filterByGroup, QUALITIES, SEVERITY, WD_LONG, addDays, askMorning, dayDoseOf, doseLabel, freqOf, goalMinOf, goalOf, isCompleteOn, isMin, weekProgress } from "../domain";
 import { PsfsCard } from "./Psfs";
 import { C } from "../styles/tokens";
-import { Card, Empty, IconBtn, MiniBtn, SectionLabel } from "./common";
+import { Card, Empty, GroupChips, IconBtn, MiniBtn, SectionLabel } from "./common";
 
 /* ================================================================== */
 /*  TODAY                                                              */
@@ -40,11 +40,16 @@ export function TodayView({
   logs,
   completeProgram,
   openFocus,
+  groups,
+  group,
+  setGroup,
   setMorning,
   programUndo,
   undoProgram,
 }) {
   const doneCount = exercises.filter((e) => isCompleteOn(log, e)).length;
+  /* the list follows the group filter; the day's ring above counts everything */
+  const visible = setGroup ? filterByGroup(exercises, group) : exercises;
   const total = exercises.length;
 
   return (
@@ -88,7 +93,7 @@ export function TodayView({
           <button
             className="tap"
             onClick={() => {
-              const next = exercises.find((e) => !isCompleteOn(log, e)) || exercises[0];
+              const next = visible.find((e) => !isCompleteOn(log, e)) || visible[0];
               openFocus(next.id);
             }}
             style={{ display: "inline-flex", alignItems: "center", gap: 6, margin: "0 2px 9px", padding: "6px 12px", borderRadius: 999, border: `1px solid ${C.pine}`, background: C.surface, color: C.pineDeep, fontSize: 13, fontWeight: 600 }}>
@@ -96,18 +101,20 @@ export function TodayView({
           </button>
         )}
       </div>
+      {/* only once a group exists; the filter is a view, adherence is unchanged */}
+      {setGroup && <GroupChips groups={groups} value={group} onChange={setGroup} style={{ marginBottom: 10 }} />}
       <ProgramButton
-        exercises={exercises}
+        exercises={visible}
         logs={logs}
         log={log}
         dateKey={dateKey}
-        onComplete={completeProgram}
+        onComplete={() => completeProgram(group)}
         undo={programUndo && programUndo.key === dateKey ? programUndo : null}
         onUndo={undoProgram}
       />
       <Card style={{ padding: 6 }}>
         {exercises.length === 0 && <Empty>Ei liikkeitä vielä.</Empty>}
-        {exercises.map((e, i) => (
+        {visible.map((e, i) => (
           <ExerciseRow
             key={e.id}
             ex={e}

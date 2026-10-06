@@ -23,6 +23,7 @@ import { FREQ_DAILY } from "./freq";
 import { EQUIP_IDS } from "./gym";
 import { LIBRARY, LIB_BY_ID } from "./library";
 import { normalizeExercises } from "./normalize";
+import { normalizeGroups } from "./groups";
 import { uid } from "./num";
 import { EX_TYPE_IDS } from "./taxonomy";
 import { exerciseFromLibrary } from "./templates";
@@ -229,9 +230,21 @@ export function mergeExercises(existing, incoming) {
       revived.push({ id: old.id, name: old.name, before: old.dose, after: e.dose, unit: old.unit });
     } else skipped++;
   });
+  /* Group labels are a view, not a prescription, so an incoming exercise's
+     labels are added to its existing namesake even when nothing else about
+     it is touched — that is how a template's group gathers exercises the
+     programme already had. */
+  const labelsFor = new Map();
+  incoming.forEach((e) => {
+    const old: any = byName.get(norm(e.name));
+    if (old && e.groups && e.groups.length) labelsFor.set(old.id, [...(labelsFor.get(old.id) || []), ...e.groups]);
+  });
   const exercises = (existing || []).map((x) => {
     const e = reviveIds.get(x.id);
-    return e ? { ...x, archived: false, dose: { ...e.dose }, freq: e.freq || x.freq, equip: e.equip || x.equip || null } : x;
+    const labels = labelsFor.get(x.id);
+    const groups = labels ? normalizeGroups([...(x.groups || []), ...labels]) : x.groups;
+    if (e) return { ...x, archived: false, dose: { ...e.dose }, freq: e.freq || x.freq, equip: e.equip || x.equip || null, groups };
+    return labels && groups.length !== (x.groups || []).length ? { ...x, groups } : x;
   });
   return { exercises: [...exercises, ...add], added: add.length, revived, skipped };
 }
@@ -272,6 +285,7 @@ export function encodeProgram(exercises) {
       if (e.structures && e.structures.length) o.s = e.structures;
       if (e.met) o.e = e.met;
       if (e.video) o.v = e.video;
+      if (e.groups && e.groups.length) o.g = e.groups;
       return o;
     });
   return "1." + b64url.enc(JSON.stringify(items));
@@ -300,6 +314,7 @@ export function decodeProgram(payload, todayKey?: string) {
           structures: o.s,
           met: o.e,
           video: typeof o.v === "string" ? o.v : "",
+          groups: o.g,
           dose: { sets: sets || null, reps: reps || null, hold: hold || null, min: min || null },
           added: todayKey || null,
         };
