@@ -30,6 +30,7 @@
         --pine: #1f7a5c;
         --tint: #e2ede7;
         --lift: 0 1px 2px rgb(22 36 31 / 0.05);
+        --ring: transparent;
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -42,6 +43,8 @@
           --pine: #62c7a0;
           --tint: #16271f;
           --lift: none;
+          /* outlines dark app icons, which otherwise melt into the card */
+          --ring: rgb(255 255 255 / 0.1);
         }
       }
       * { box-sizing: border-box; }
@@ -86,7 +89,8 @@
       .card:focus-visible { outline: 2px solid var(--pine); outline-offset: 2px; }
       /* hover only where it exists: on touch screens it sticks after a tap */
       @media (hover: hover) { .card:hover { border-color: var(--pine); } }
-      .icon { flex: none; width: 48px; height: 48px; border-radius: 11px; }
+      /* 12px clears the opaque corners of touch icons drawn for the iOS mask */
+      .icon { flex: none; width: 48px; height: 48px; border-radius: 12px; box-shadow: 0 0 0 1px var(--ring); }
       .initials {
         display: grid;
         place-items: center;
