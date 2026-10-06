@@ -4,14 +4,26 @@ name: Deploy to GitHub Pages
 #
 #   landing/            -> https://topiu.github.io/
 #   liikepaivakirja/    -> https://topiu.github.io/liikepaivakirja/
+#   mokkipohja/         -> https://topiu.github.io/mokkipohja/
 #   <any-folder>/       -> https://topiu.github.io/<any-folder>/
 #
-# Convention over configuration: any immediate subfolder containing a
-# package.json is treated as an app, built with BASE_PATH=/<folder>/ and copied
-# to _site/<folder>/. Adding an app means adding a folder — this file does not
-# need to change. Requirements on an app folder: a "build" script that honours
-# BASE_PATH and writes to dist/, and a "test" script (use "test": "true" if it
-# has none).
+# Convention over configuration: adding an app means adding a folder — neither
+# this file nor the landing page needs to change.
+#
+#   - A folder with a package.json is built with BASE_PATH=/<folder>/. It needs
+#     a "build" script that honours BASE_PATH and writes to dist/, and a "test"
+#     script (use "test": "true" if it has none).
+#   - A folder without one is published as-is if it holds an .html page: its
+#     index.html, or its only .html file when there is no index.html.
+#
+# The landing page lists every app with the name, description and icon taken
+# from the app's own index.html, written into apps.json at deploy time along
+# with the deployed commit.
+#
+# The steps live in .github/scripts/ so they run the same way locally, and so
+# they can change without touching this file: GitHub refuses edits under
+# .github/workflows/ from a token without the workflow scope, such as the one
+# "Apply zip" commits with.
 
 on:
   push: { branches: [main] }
@@ -51,73 +63,14 @@ jobs:
       # previous good deployment in place instead.
       - uses: actions/configure-pages@v6
 
+      # Builds or copies every app into _site/ and writes apps.json.
       - name: Assemble site
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
+        run: bash .github/scripts/assemble-site.sh
 
-          mkdir -p _site
-          if [ -d landing ]; then cp -r landing/. _site/; fi
-
-          apps=()
-          for pkg in */package.json; do
-            app="$(dirname "$pkg")"
-            echo "::group::build $app"
-            ( cd "$app" \
-              && npm ci --no-audit --no-fund \
-              && npm test \
-              && BASE_PATH="/$app/" npm run build )
-            mkdir -p "_site/$app"
-            cp -r "$app/dist/." "_site/$app/"
-            apps+=("$app")
-            echo "::endgroup::"
-          done
-
-          if [ ${#apps[@]} -eq 0 ]; then
-            list=""
-          else
-            list="$(printf '"%s",' "${apps[@]}" | sed 's/,$//')"
-          fi
-          printf '{"built":"%s","apps":[%s]}\n' \
-            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$list" > _site/apps.json
-
-          echo "publishing:"
-          find _site -maxdepth 2 -mindepth 1 | sort
-
-      # A broken publish used to be silent: the page loaded and simply did
-      # nothing. Every local asset an app's index.html references must exist in
-      # the artifact, and no page may still point at unbuilt sources. Failing
-      # here keeps the last good deployment live instead of replacing it with
-      # something that cannot start.
+      # Fails if a published page references an asset missing from the
+      # artifact, so a broken build never replaces the live site.
       - name: Verify the assembled site
-        run: |
-          set -euo pipefail
-          fail=0
-          for d in _site/*/; do
-            app="$(basename "$d")"
-            page="$d/index.html"
-            [ -f "$page" ] || continue
-
-            if grep -qE '(src|href)="[^"]*/src/' "$page"; then
-              echo "::error::$app/index.html still points at unbuilt sources"
-              fail=1
-            fi
-
-            while IFS= read -r ref; do
-              case "$ref" in
-                ""|http*|//*|data:*|\#*|mailto:*) continue ;;
-                /*) target="_site${ref}" ;;
-                *)  target="${d}${ref}" ;;
-              esac
-              target="${target%%\?*}"; target="${target%%\#*}"
-              if [ ! -e "$target" ]; then
-                echo "::error::$app references $ref but $target is not in the artifact"
-                fail=1
-              fi
-            done < <(grep -oE '(src|href)="[^"]+"' "$page" | sed -E 's/^[^"]*"//; s/"$//')
-          done
-          [ "$fail" -eq 0 ] || exit 1
-          echo "verified: every referenced asset is present"
+        run: bash .github/scripts/verify-site.sh
 
       - uses: actions/upload-pages-artifact@v4
         with:
