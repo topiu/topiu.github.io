@@ -37,6 +37,7 @@ src/
     plancheck.js   furniture overlaps and door swings
     wallpieces.js  walls as solids: overlaps merged, corners mitred, roof heights
     walk.js        walking in 3D: start point, wall collision, camera framing
+    sun.js         where the sun is at a date, time and place
   storage.js       localStorage keys, backup and restore
   i18n.js          every UI string, English and Finnish
   export/          sheet rendering (canvas) and the minimal PDF writer
@@ -59,7 +60,7 @@ Everything is stored under the `mokkipohja:` prefix:
 | `library:v2` | the furniture library: seed pieces plus custom shapes |
 | `settings:v1` | `{ lang, grid, showHead, showGrid, showDims, invert3d }` |
 
-A plan is `{ id, name, wallT, walls, rooms, openings, items, image }`:
+A plan is `{ id, name, wallT, walls, rooms, openings, items, image, site }`:
 
 - **walls** `{ id, x1, y1, x2, y2, t }`. A wall generated from a room also has
   `room` (the room's id) and `edge` (the index of the room edge it follows).
@@ -70,6 +71,10 @@ A plan is `{ id, name, wallT, walls, rooms, openings, items, image }`:
   plus optional `sill` and `head`.
 - **items** `{ id, defId, x, y, rot }`, where `rot` is in degrees and `defId`
   points into the library.
+- **site** `{ north, lat, lon }`, optional: which way north points on the plan
+  (degrees clockwise from straight up) and where the cabin is, for the 3D
+  sun study. Plans without it read as north up, 61°N 25°E (`siteOf` in
+  `domain/sun.js`). Set from the sun study; the plan then shows a north arrow.
 - **image** `{ key, natW, natH, mmPerPx, x, y, opacity, locked }`, or `null`.
   `key` names the stored picture. Plans from before October 2026 have no `key`
   and use `planimg:<id>`. Each import gets a new key, so removing or replacing
@@ -123,8 +128,14 @@ If the fetch fails, the view offers a reload.
 - Seed furniture has models of its own, scaled to the piece and always within
   its footprint and height. Custom shapes are their outline raised to their
   height. Unrotated, a model faces plan +y (down the screen); the plan draws the
-  back edge of such pieces bold. A piece taller than the ceiling where it
-  stands is red.
+  back edge of such pieces bold.
+- **Sun** (☀) puts the sun where it really is at a time of day and day of
+  the year, for the plan's north and latitude, from midnight sun to winter
+  dusk; the sky and light follow it. North and latitude are saved with the
+  plan. **Picture** (camera) shares the current view as a PNG, or downloads
+  it where sharing files is not possible.
+- A piece too tall for where it stands gets a red shell and red edges over
+  its own look.
 - Surfaces are drawn by code (`view3d/textures.js`); there are no image files.
   Nothing is drawn unless something changed, and the sun's shadows are redrawn
   only when what casts them changes, which keeps a phone cool.
