@@ -137,7 +137,8 @@ export function View3D({ doc, defs, lang, t, onClose, invert, setInvert, onSite 
     let h = { x: 0.6, y: 0.8 };
     if (d.openings.some((o) => o.kind === "door")) {
       const st = walkStart(d, df);
-      const a = Math.atan2(-st.dir.y, -st.dir.x) + 35 * D2R;
+      const inward = st.inward || st.dir;
+      const a = Math.atan2(-inward.y, -inward.x) + 35 * D2R;
       h = { x: Math.cos(a), y: Math.sin(a) };
     }
     const el = (cam.aspect < 1 ? 56 : 42) * D2R;

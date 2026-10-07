@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { blockingSegments } from "../src/domain/walk";
 import {
+  groupCentres,
   lyingAgainst,
   pieceEnds,
   ridgeOf,
@@ -317,5 +318,25 @@ describe("doors between rooms with a wall each", () => {
       expect(p.ops).toHaveLength(1);
       expect(p.ops[0].through).toBe(false); // each wall keeps its own door
     }
+  });
+});
+
+describe("buildings drawn with free walls", () => {
+  it("finds the middle of each building, not of the whole plan", () => {
+    const box = (id, x0, y0, x1, y1) => [
+      W(id + 0, x0, y0, x1, y0),
+      W(id + 1, x1, y0, x1, y1),
+      W(id + 2, x1, y1, x0, y1),
+      W(id + 3, x0, y1, x0, y0),
+    ];
+    const walls = [
+      ...box("a", 0, 0, 4000, 3000),
+      ...box("b", 10000, 0, 13000, 9000),
+      W("p", 10004, 5000, 11400, 5000),
+    ];
+    const c = groupCentres(wallPieces(plan({ walls })));
+    expect(c[0]).toEqual({ x: 2000, y: 1500 });
+    expect(c[4]).toEqual({ x: 11500, y: 4500 });
+    expect(c[8]).toEqual({ x: 11500, y: 4500 }); // the partition belongs to its building
   });
 });

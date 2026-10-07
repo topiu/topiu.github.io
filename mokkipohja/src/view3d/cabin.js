@@ -14,6 +14,7 @@ import { polySigned } from "../domain/rooms";
 import { ROOF_BUILDUP, onRoof, planRoofs } from "../domain/roofs";
 import { faceParts } from "../domain/wallfaces";
 import {
+  groupCentres,
   pieceEnds,
   ridgeOf,
   roofHeightAt,
@@ -40,14 +41,14 @@ export function buildCabin(doc, defs, mats) {
   const furniture = new THREE.Group();
   group.add(floors, walls, slabs, roof, furniture);
   const rooms = doc.rooms.filter((r) => r.points && r.points.length > 2);
-  const centre = planCentre(doc, defs);
 
   rooms.forEach((r, i) => floors.add(floorMesh(r, i, mats)));
 
   const pieces = wallPieces(doc);
   const ends = pieceEnds(pieces);
+  const centres = groupCentres(pieces);
   const wallInfo = pieces.map((p, i) => {
-    const w = buildWall(p, ends[i], doc, rooms, mats, centre);
+    const w = buildWall(p, ends[i], doc, rooms, mats, centres[i]);
     walls.add(w.obj);
     slabs.add(w.slab);
     return w;
@@ -617,13 +618,6 @@ function roomLights(rooms) {
       light.userData.on = light.intensity;
       return light;
     });
-}
-
-function planCentre(doc, defs) {
-  const pts = planPoints(doc, defs);
-  if (!pts.length) return { x: 0, y: 0 };
-  const b = bbox(pts);
-  return { x: b.cx, y: b.cy };
 }
 
 function planPoints(doc, defs) {

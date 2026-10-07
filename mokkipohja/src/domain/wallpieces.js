@@ -1,5 +1,5 @@
 import { ceilingAt, defaultCeiling, roomAt } from "./ceilings";
-import { bbox } from "./geometry";
+import { bbox, distToSeg, segCross } from "./geometry";
 import { DEF_WALL_H, openHead, openSill } from "./openings";
 
 /* The walls as solid things, for the 3D view and for walking into them.
@@ -373,3 +373,39 @@ export function topBreaks(piece, doc, w = 0) {
   return out;
 }
 
+/* The middle of each piece's own group of walls: the walls that touch it, and
+   the walls touching those, and so on; a building drawn with free walls. The
+   3D view cuts away the walls between the camera and the middle of their own
+   building, not the middle of the whole plan, which may be off to one side
+   when the plan holds more than one building. One point per piece. */
+export function groupCentres(pieces) {
+  const parent = pieces.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const a = (p) => ({ x: p.x1, y: p.y1 }),
+    b = (p) => ({ x: p.x2, y: p.y2 });
+  for (let i = 0; i < pieces.length; i++)
+    for (let j = i + 1; j < pieces.length; j++) {
+      const p = pieces[i],
+        q = pieces[j];
+      const reach = (p.t + q.t) / 2 + 20;
+      const near =
+        segCross(a(p), b(p), a(q), b(q)) ||
+        Math.min(
+          distToSeg(a(p), a(q), b(q)),
+          distToSeg(b(p), a(q), b(q)),
+          distToSeg(a(q), a(p), b(p)),
+          distToSeg(b(q), a(p), b(p)),
+        ) <= reach;
+      if (near) parent[find(i)] = find(j);
+    }
+  const pts = new Map();
+  pieces.forEach((p, i) => {
+    const g = find(i);
+    if (!pts.has(g)) pts.set(g, []);
+    pts.get(g).push(a(p), b(p));
+  });
+  const centre = new Map(
+    [...pts].map(([g, list]) => [g, (({ cx, cy }) => ({ x: cx, y: cy }))(bbox(list))]),
+  );
+  return pieces.map((_, i) => centre.get(find(i)));
+}

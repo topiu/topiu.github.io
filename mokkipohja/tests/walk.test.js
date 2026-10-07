@@ -64,6 +64,48 @@ describe("where walk mode starts", () => {
     expect(s.dir.y).toBeCloseTo(-1);
   });
 
+  it("in a small hall, looks through a door into the room beyond", () => {
+    // a 1.9 m hall with its front door on the right; the big room through a door on its far side
+    const hall = [
+      { x: 0, y: 0 },
+      { x: 1900, y: 0 },
+      { x: 1900, y: 1400 },
+      { x: 0, y: 1400 },
+    ];
+    const big = [
+      { x: -1500, y: -5000 },
+      { x: 3000, y: -5000 },
+      { x: 3000, y: 0 },
+      { x: -1500, y: 0 },
+    ];
+    const ring = (id, pts) =>
+      pts.map((p, i) => ({
+        id: id + i,
+        room: id,
+        edge: i,
+        x1: p.x,
+        y1: p.y,
+        x2: pts[(i + 1) % 4].x,
+        y2: pts[(i + 1) % 4].y,
+        t: 100,
+      }));
+    const d = {
+      rooms: [
+        { id: "H", points: hall },
+        { id: "B", points: big },
+      ],
+      walls: [...ring("H", hall), ...ring("B", big)],
+      openings: [
+        { id: "front", wallId: "H1", off: 300, w: 800, kind: "door" }, // the hall's right side
+        { id: "in", wallId: "H0", off: 550, w: 800, kind: "door" }, // its top, into the big room
+      ],
+      items: [],
+    };
+    const s = walkStart(d);
+    expect(s.x).toBeCloseTo(1200); // 700 mm in from the front door
+    expect(s.dir.y).toBeLessThan(-0.4); // looking up into the big room, not at the hall's back wall
+  });
+
   it("without doors, stands in the biggest room, clear of furniture", () => {
     const defs = { T: { id: "T", type: "rect", w: 1400, h: 800 } };
     const s = walkStart(cabin([], [{ id: "t", defId: "T", x: 2500, y: 3500, rot: 0 }]), defs);

@@ -16,8 +16,11 @@ const insideAnyRoom = (doc, p) =>
    furnished cabin meant standing in the dining table looking at a wall.
    The front door is the first door with the outside on one side and a room
    on the other; failing that, the first door in a room's wall, then any
-   door. Without doors, the middle of the biggest room, looking along it.
-   Returns { x, y, dir: {x, y} } with dir a unit vector. */
+   door. Inside it, the view turns the way it can see furthest (through the
+   doors on, too), keener on straight in: a small hall, entered, shows the
+   room beyond rather than the hall's back wall. Without doors, the middle
+   of the biggest room, looking along it. Returns { x, y, dir: {x, y} } with
+   dir a unit vector, and with a front door, inward: the way it faces in. */
 export function walkStart(doc, defs = {}) {
   const doors = doc.openings
     .filter((o) => o.kind === "door")
@@ -35,8 +38,25 @@ export function walkStart(doc, defs = {}) {
     })
     .filter(Boolean);
   const door = doors.find((d) => d.outside) || doors.find((d) => d.onRoom) || doors[0];
-  if (door)
-    return { x: door.c.x + door.dir.x * 700, y: door.c.y + door.dir.y * 700, dir: door.dir };
+  if (door) {
+    const p = { x: door.c.x + door.dir.x * 700, y: door.c.y + door.dir.y * 700 };
+    const segs = blockingSegments(doc);
+    let best = door.dir,
+      score = -1;
+    for (const deg of [0, 30, -30, 60, -60, 90, -90]) {
+      const a = (deg * Math.PI) / 180;
+      const d = {
+        x: door.dir.x * Math.cos(a) - door.dir.y * Math.sin(a),
+        y: door.dir.x * Math.sin(a) + door.dir.y * Math.cos(a),
+      };
+      const k = rayDistance(p, d, segs) * (1 + 0.25 * Math.cos(a));
+      if (k > score + 1e-6) {
+        score = k;
+        best = d;
+      }
+    }
+    return { ...p, dir: best, inward: door.dir };
+  }
   const rooms = [...doc.rooms]
     .filter((r) => r.points.length > 2)
     .sort((a, b) => Math.abs(polyArea(b.points)) - Math.abs(polyArea(a.points)));
@@ -49,6 +69,21 @@ export function walkStart(doc, defs = {}) {
     return { ...p, dir: b.w >= b.h ? { x: 1, y: 0 } : { x: 0, y: 1 } };
   }
   return { x: 0, y: 0, dir: { x: 0, y: 1 } };
+}
+
+/* how far a look from p along unit d goes before it meets a wall, up to 20 m */
+function rayDistance(p, d, segs) {
+  let best = 20000;
+  for (const s of segs) {
+    const ex = s.x2 - s.x1,
+      ey = s.y2 - s.y1;
+    const den = d.x * ey - d.y * ex;
+    if (Math.abs(den) < 1e-9) continue;
+    const t = ((s.x1 - p.x) * ey - (s.y1 - p.y) * ex) / den; // along the look
+    const u = ((s.x1 - p.x) * d.y - (s.y1 - p.y) * d.x) / den; // along the wall
+    if (t > 0 && u >= 0 && u <= 1) best = Math.min(best, t - s.t / 2);
+  }
+  return Math.max(0, best);
 }
 
 /* Nudge a point off furniture, staying in the room, by searching outward. */
