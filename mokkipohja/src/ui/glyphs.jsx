@@ -68,6 +68,13 @@ export function Glyph({ name, size = 21 }) {
         <path d="M3.5 15v4.5h17V15" />
       </React.Fragment>
     ),
+    more: (
+      <React.Fragment>
+        <circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none" />
+        <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+        <circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none" />
+      </React.Fragment>
+    ),
     cube: (
       <React.Fragment>
         <path d="M12 2.6 21 7.4v9.2L12 21.4 3 16.6V7.4Z" />
