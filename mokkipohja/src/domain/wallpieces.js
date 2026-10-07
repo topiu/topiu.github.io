@@ -239,17 +239,43 @@ export function wallTop(piece, doc) {
       return r ? Math.min(h, ceilingAt(r, p)) : h;
     };
   }
-  const extra = (piece.shared || [])
-    .map((s) => ({ ...s, room: roomOf(s.room) }))
-    .filter((s) => s.room);
+  const extra = standsInFor(piece, doc);
   return (p) => {
     let h = own(p);
     if (extra.length) {
       const u = (p.x - piece.x1) * piece.ux + (p.y - piece.y1) * piece.uy;
-      for (const s of extra) if (u >= s.lo && u <= s.hi) h = Math.max(h, roofHeightAt(s.room, p));
+      // a hair over: the ends of the step's slice are found by interpolating,
+      // and a corner that lands 1e-12 past the end must not drop to the low side
+      for (const s of extra)
+        if (u >= s.lo - 1e-6 && u <= s.hi + 1e-6) h = Math.max(h, roofHeightAt(s.room, p));
     }
     return Math.max(200, h);
   };
+}
+
+/* Where a piece stands in for other rooms' walls, as { room, lo, hi } in mm
+   along it: where their walls overlap it, carried on at each end to the outer
+   face of that room's walls, as far as that room's roof covers the piece. Up
+   to there the piece rises to that roof; stopped at the overlap's end, it
+   left a notch open to the sky at the corner, beside the room's next wall. */
+function standsInFor(piece, doc) {
+  return (piece.shared || []).flatMap((s) => {
+    const room = doc.rooms.find((r) => r.id === s.room && r.points && r.points.length > 2);
+    if (!room) return [];
+    const g = wallFaces(room).outer;
+    return [{ room, lo: s.lo - g, hi: s.hi + g }];
+  });
+}
+
+/* where a room's walls stand relative to its edges: their outer faces, and
+   their inner faces (negative: inside the room) */
+export function wallFaces(room) {
+  const aw = room.autoWalls || {};
+  const t = aw.t || 150;
+  if (aw.mode === "outside") return { outer: t, inner: 0 };
+  if (aw.mode === "centre") return { outer: t / 2, inner: -t / 2 };
+  if (aw.mode === "inside") return { outer: 0, inner: -t };
+  return { outer: 0, inner: 0 };
 }
 
 /* the places along a piece where its height can step or bend: where the
@@ -259,7 +285,7 @@ export function topBreaks(piece, doc, w = 0) {
   const rooms = [piece.room, ...(piece.shared || []).map((s) => s.room)]
     .map((id) => doc.rooms.find((r) => r.id === id))
     .filter(Boolean);
-  for (const s of piece.shared || []) out.push(s.lo - 1, s.lo, s.hi, s.hi + 1);
+  for (const s of standsInFor(piece, doc)) out.push(s.lo - 1, s.lo, s.hi, s.hi + 1);
   const nx = -piece.uy,
     ny = piece.ux;
   for (const r of rooms) {
@@ -271,3 +297,4 @@ export function topBreaks(piece, doc, w = 0) {
   }
   return out;
 }
+

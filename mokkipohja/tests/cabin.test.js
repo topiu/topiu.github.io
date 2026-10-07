@@ -104,16 +104,32 @@ describe("roofs", () => {
     expect(b.max.y).toBeCloseTo(2.62); // 2400 ceiling + 220 of roof
   });
 
-  it("meets the next room's roof over the wall they share, without overlapping it", () => {
+  it("runs one roof over two rooms of the same height, across the wall between them", () => {
     const c = buildCabin(
       plan([rect("A", 0, 0, 4000, 3000), rect("B", 4000, 0, 7000, 3000)]),
       {},
       mats,
     );
-    const [a, b] = c.roof.children.filter((o) => o.isGroup).map(box);
-    expect(a.max.x).toBeCloseTo(4.0);
-    expect(b.min.x).toBeCloseTo(4.0);
-    expect(a.min.x).toBeCloseTo(-0.525);
+    const roofs = c.roof.children.filter((o) => o.isMesh);
+    expect(roofs).toHaveLength(1);
+    const b = box(roofs[0]);
+    expect(b.min.x).toBeCloseTo(-0.525);
+    expect(b.max.x).toBeCloseTo(7.525);
+  });
+
+  it("stops a lower roof at the wall of a higher room, which covers that wall", () => {
+    const c = buildCabin(
+      plan([
+        rect("A", 0, 0, 4000, 3000),
+        rect("B", 4000, 0, 7000, 3000, { mode: "flat", h: 2700 }),
+      ]),
+      {},
+      mats,
+    );
+    const [low, high] = c.roof.children.filter((o) => o.isMesh).map(box);
+    expect(low.max.x).toBeCloseTo(3.925); // the face of the 150 mm wall on the low side
+    expect(high.min.x).toBeCloseTo(3.925);
+    expect(high.max.y).toBeCloseTo(2.92);
   });
 });
 
