@@ -1,26 +1,56 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { C, MONO, clamp } from "../core";
-import { bbox, itemPoly, wallPoly } from "../domain/geometry";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
+import { C, D2R, MONO, TAP_SLOP, clamp } from "../core";
+import { blockingSegments, fitPointsDistance, walkMove, walkStart } from "../domain/walk";
 import { Btn } from "../ui/atoms";
-import { makeCam, makeGL, renderScene } from "./raster";
-import { buildScene } from "./scene";
+import { buildCabin } from "./cabin";
+import { makeMaterials } from "./materials";
+import { Stage } from "./stage";
 
 /* ============================================================
-   3D viewport: orbit or walk, with touch controls
+   3D view: orbit round the cabin, or walk through it.
+   Orbit opens framed to the screen's shape, roof off, with the walls between
+   the camera and the rooms cut away, so a phone held upright shows the whole
+   plan furnished. Walk starts just inside the front door; drag to look, tap
+   the floor to walk there, use the stick or the keys. Walls stop you; doors
+   let you through.
    ============================================================ */
 
-export function View3D({ doc, defs, lang, t, onClose, invert, setInvert }) {
+const MM = 0.001;
+const EYE = 1650;
+const WALK_SPEED = 1600; // mm per second
+const FOV = { orbit: 45, walk: 70 };
+const KEYS = new Set([
+  "KeyW",
+  "KeyA",
+  "KeyS",
+  "KeyD",
+  "KeyQ",
+  "KeyE",
+  "ShiftLeft",
+  "ShiftRight",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Equal",
+  "Minus",
+  "NumpadAdd",
+  "NumpadSubtract",
+]);
+
+export function View3D({ doc, defs, t, onClose, invert, setInvert }) {
   const [mode, setMode] = useState("orbit");
   const [vis, setVis] = useState({
-    roof: true,
+    roofOrbit: false,
+    roofWalk: true,
     walls: true,
     furniture: true,
   });
-  const eyeRef = useRef(1650);
-  const [eyeShown, setEyeShown] = useState(1650);
-  const [, tick] = useState(0);
-  const keys = useRef(new Set());
-  const lastT = useRef(0);
+  const [eyeShown, setEyeShown] = useState(EYE);
+  const [failed, setFailed] = useState(false);
+  const [lost, setLost] = useState(false);
+  const [stickUI, setStickUI] = useState({ active: false, dx: 0, dy: 0 });
   const coarse = useMemo(
     () =>
       typeof window !== "undefined" && window.matchMedia
@@ -28,446 +58,498 @@ export function View3D({ doc, defs, lang, t, onClose, invert, setInvert }) {
         : true,
     [],
   );
-  const setEye = (v) => {
-    eyeRef.current = clamp(v, 100, 40000);
-    setEyeShown(Math.round(eyeRef.current));
-    dirty.current = true;
-  };
+
   const wrap = useRef(null);
-  const cvRef = useRef(null);
-  const dirty = useRef(true);
-  const glr = useRef(null);
-  const [gpu, setGpu] = useState(null); // null = not decided yet
-  const orb = useRef({
-    tx: 0,
-    ty: 0,
-    tz: 1200,
-    dist: 14000,
-    az: -2.3,
-    el: 0.45,
-  });
-  const walk = useRef({
+  const host = useRef(null); // holds the canvas, made fresh for each stage
+  const S = useRef(null); // { stage, mats, cabin, segments }
+  const live = useRef({});
+  live.current = { mode, vis, invert, onClose, doc, defs };
+  const walker = useRef({
     x: 0,
     y: 0,
     yaw: 0,
-    pitch: -0.03,
+    pitch: -0.08,
+    eye: EYE,
+    target: null,
+    started: false,
   });
-  const stick = useRef({
-    active: false,
-    dx: 0,
-    dy: 0,
-    id: null,
-    ox: 0,
-    oy: 0,
-  });
-  const ptrs = useRef(new Map());
-  const gest = useRef(null);
-  const size = useRef({
-    w: 320,
-    h: 320,
-  });
+  const orbitSaved = useRef(null);
+  const keys = useRef(new Set());
+  const stick = useRef({ active: false, id: null, ox: 0, oy: 0, dx: 0, dy: 0 });
+  const look = useRef(null);
+  const userMoved = useRef(false);
+  const cutKey = useRef("");
+  const lostRef = useRef(false);
 
-  /* the painter's fallback needs small faces to sort well; WebGL does not */
-  const faces = useMemo(
-    () =>
-      buildScene(doc, defs, {
-        ...vis,
-        subdiv: gpu ? 0 : 900,
-      }),
-    [doc, defs, vis, gpu],
-  );
-  const sceneFar = useMemo(() => {
-    const pts = [];
-    for (const w of doc.walls) pts.push(...wallPoly(w));
-    for (const r of doc.rooms) pts.push(...r.points);
-    const b = pts.length
-      ? bbox(pts)
-      : {
-          w: 8000,
-          h: 8000,
-        };
-    return Math.max(b.w, b.h) * 8 + 40000;
-  }, [doc.walls, doc.rooms]);
+  /* ---- what is shown ---- */
+  const applyVis = () => {
+    const s = S.current;
+    if (!s || !s.cabin) return;
+    const { mode: m, vis: v } = live.current;
+    s.cabin.roof.visible = m === "walk" ? v.roofWalk : v.roofOrbit;
+    for (const l of s.cabin.lights) l.intensity = m === "walk" ? l.userData.on : 0;
+    s.cabin.furniture.visible = v.furniture;
+    for (const w of s.cabin.walls) w.obj.visible = v.walls;
+    cutKey.current = "";
+    s.stage.invalidate(true);
+  };
 
-  /* frame the model when the view opens */
-  useEffect(() => {
-    const pts = [];
-    for (const w of doc.walls) pts.push(...wallPoly(w));
-    for (const r of doc.rooms) pts.push(...r.points);
-    for (const it of doc.items) {
-      const d = defs[it.defId];
-      if (d) pts.push(...itemPoly(it, d));
-    }
-    const b = pts.length
-      ? bbox(pts)
-      : {
-          cx: 0,
-          cy: 0,
-          w: 6000,
-          h: 6000,
-        };
-    orb.current = {
-      tx: b.cx,
-      ty: -b.cy,
-      tz: 1100,
-      dist: Math.max(b.w, b.h) * 1.7 + 4000,
-      az: -2.25,
-      el: 0.44,
-    };
-    walk.current = {
-      x: b.cx,
-      y: -b.cy,
-      yaw: 0.6,
-      pitch: -0.03,
-    };
-    dirty.current = true;
-  }, []);
-  useEffect(() => {
-    const cv = cvRef.current;
-    if (!cv) return;
-    const r = makeGL(cv);
-    glr.current = r;
-    setGpu(!!r);
-    dirty.current = true;
-  }, []);
-  useEffect(() => {
-    if (glr.current) glr.current.upload(faces);
-    dirty.current = true;
-  }, [faces]);
-  useEffect(() => {
-    dirty.current = true;
-  }, [mode]);
-  const camNow = useCallback(() => {
-    if (mode === "orbit") {
-      const o = orb.current;
-      const ce = Math.cos(o.el);
-      const eye = {
-        x: o.tx - Math.cos(o.az) * ce * o.dist,
-        y: o.ty - Math.sin(o.az) * ce * o.dist,
-        z: o.tz + Math.sin(o.el) * o.dist,
-      };
-      return makeCam(eye, o.az, -o.el, 0.85);
-    }
-    const w = walk.current;
-    return makeCam(
-      {
-        x: w.x,
-        y: w.y,
-        z: eyeRef.current,
-      },
-      w.yaw,
-      w.pitch,
-      1.12,
-    );
-  }, [mode]);
-
-  /* draw loop: only repaints when something moved */
-  useEffect(() => {
-    let raf;
-    const frame = (ts) => {
-      const cv = cvRef.current;
-      const dt = lastT.current ? Math.min((ts - lastT.current) / 1000, 0.1) : 0;
-      lastT.current = ts;
-      if (cv) {
-        const s = stick.current;
-        const K = keys.current;
-        const key = (a, b) => (K.has(a) ? 1 : 0) - (K.has(b) ? 1 : 0);
-        if (mode === "walk") {
-          const fwd = (s.active ? -s.dy : 0) + key("w", "s") + key("arrowup", "arrowdown");
-          const side = (s.active ? s.dx : 0) + key("d", "a");
-          const rise = key("e", "q");
-          if (fwd || side || rise) {
-            const w = walk.current;
-            const sp = 1900 * (K.has("shift") ? 3 : 1) * dt;
-            // right vector of a camera at this yaw is (sin yaw, -cos yaw)
-            w.x += (Math.cos(w.yaw) * fwd + Math.sin(w.yaw) * side) * sp;
-            w.y += (Math.sin(w.yaw) * fwd - Math.cos(w.yaw) * side) * sp;
-            if (rise) {
-              eyeRef.current = clamp(eyeRef.current + rise * sp, 100, 40000);
-              if (Math.abs(eyeRef.current - eyeShown) > 40) setEyeShown(Math.round(eyeRef.current));
-            }
-            dirty.current = true;
-          }
-        } else {
-          const turn = key("d", "a") + key("arrowright", "arrowleft");
-          const tilt = key("w", "s") + key("arrowup", "arrowdown");
-          const dolly = key("=", "-") + key("+", "_");
-          if (turn || tilt || dolly) {
-            orb.current.az += turn * 1.4 * dt;
-            orb.current.el = clamp(orb.current.el + tilt * 1.1 * dt, -0.25, 1.45);
-            if (dolly)
-              orb.current.dist = clamp(orb.current.dist * (1 - dolly * 1.4 * dt), 800, 200000);
-            dirty.current = true;
-          }
-        }
-        if (dirty.current) {
-          dirty.current = false;
-          const r = wrap.current.getBoundingClientRect();
-          const dpr = Math.min(window.devicePixelRatio || 1, 2);
-          const W = Math.max(1, Math.round(r.width)),
-            H = Math.max(1, Math.round(r.height));
-          if (size.current.w !== W || size.current.h !== H) {
-            size.current = {
-              w: W,
-              h: H,
-            };
-            cv.width = W * dpr;
-            cv.height = H * dpr;
-            cv.style.width = W + "px";
-            cv.style.height = H + "px";
-          }
-          if (glr.current) {
-            glr.current.draw(camNow(), W, H, sceneFar);
-          } else {
-            const ctx = cv.getContext("2d");
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            renderScene(ctx, faces, camNow(), W, H);
-          }
-        }
+  /* Cut away the outside walls whose outer face looks at the camera, so the
+     rooms show: only in orbit with the roof off. The low slab of each wall
+     stays, so the plan still reads. */
+  const updateCutaway = () => {
+    const s = S.current;
+    const { vis: v } = live.current;
+    if (v.roofOrbit || !v.walls) return;
+    const cam = s.stage.camera.position;
+    let key = "";
+    for (const w of s.cabin.walls) {
+      let show = true;
+      if (w.out) {
+        const dx = cam.x - w.mid.x,
+          dz = cam.z - w.mid.z;
+        if ((dx * w.out.x + dz * w.out.z) / (Math.hypot(dx, dz) || 1) > 0.12) show = false;
       }
-      raf = requestAnimationFrame(frame);
+      w.obj.visible = show;
+      key += show ? "1" : "0";
+    }
+    if (key !== cutKey.current) {
+      cutKey.current = key;
+      s.stage.invalidate(true);
+    }
+  };
+
+  /* Orbit camera: three quarters on to the front door (or from the south
+     east), just far enough back that the whole model fits the screen,
+     whatever its shape. Upright, the camera looks down more steeply, so the
+     plan's depth fills the tall screen. The sun comes from the camera's
+     left, so shadows fall where they show. */
+  const frameOrbit = () => {
+    const s = S.current;
+    const { doc: d, defs: df } = live.current;
+    const { min, max, centre } = s.cabin.bounds;
+    const cam = s.stage.camera;
+    let h = { x: 0.6, y: 0.8 };
+    if (d.openings.some((o) => o.kind === "door")) {
+      const st = walkStart(d, df);
+      const a = Math.atan2(-st.dir.y, -st.dir.x) + 35 * D2R;
+      h = { x: Math.cos(a), y: Math.sin(a) };
+    }
+    const el = (cam.aspect < 1 ? 56 : 42) * D2R;
+    const dir = [h.x * Math.cos(el), Math.sin(el), h.y * Math.cos(el)];
+    const corners = [];
+    for (const x of [min.x, max.x])
+      for (const y of [min.y, max.y])
+        for (const z of [min.z, max.z]) corners.push([x - centre.x, y - centre.y, z - centre.z]);
+    const dist = fitPointsDistance(corners, dir, cam.fov * D2R, cam.aspect);
+    cam.position.set(centre.x + dir[0] * dist, centre.y + dir[1] * dist, centre.z + dir[2] * dist);
+    s.stage.controls.target.copy(centre);
+    s.stage.controls.update();
+    const sa = Math.atan2(h.y, h.x) - 70 * D2R;
+    s.stage.setSun(Math.cos(sa), Math.sin(sa));
+    s.stage.invalidate();
+  };
+
+  const placeWalkCamera = () => {
+    const s = S.current;
+    const w = walker.current;
+    const cam = s.stage.camera;
+    cam.position.set(w.x * MM, w.eye * MM, w.y * MM);
+    cam.rotation.set(w.pitch, w.yaw, 0, "YXZ");
+    s.stage.invalidate();
+  };
+
+  const setLens = (m) => {
+    const cam = S.current.stage.camera;
+    cam.fov = FOV[m];
+    cam.near = m === "walk" ? 0.05 : 0.1;
+    cam.updateProjectionMatrix();
+  };
+
+  /* ---- set up, and tear down when the view closes ---- */
+  useEffect(() => {
+    // a canvas of its own, so a context lost or given up is never reused
+    const cv = document.createElement("canvas");
+    cv.style.cssText = "display:block;width:100%;height:100%";
+    host.current.appendChild(cv);
+    let stage;
+    try {
+      stage = new Stage(cv);
+    } catch {
+      cv.remove();
+      setFailed(true);
+      return undefined;
+    }
+    const mats = makeMaterials();
+    stage.sharpen(mats);
+    stage.setGround(mats);
+    S.current = { stage, mats, cabin: null, segments: [] };
+    const onLost = (e) => {
+      e.preventDefault();
+      lostRef.current = true;
+      setLost(true);
     };
-    raf = requestAnimationFrame(frame);
+    const onRestored = () => {
+      lostRef.current = false;
+      setLost(false);
+      stage.invalidate(true);
+    };
+    cv.addEventListener("webglcontextlost", onLost);
+    cv.addEventListener("webglcontextrestored", onRestored);
+    stage.controls.addEventListener("start", () => {
+      userMoved.current = true;
+    });
     const ro = new ResizeObserver(() => {
-      dirty.current = true;
+      const r = wrap.current.getBoundingClientRect();
+      stage.resize(Math.max(1, Math.round(r.width)), Math.max(1, Math.round(r.height)));
+      if (S.current.cabin && live.current.mode === "orbit" && !userMoved.current) frameOrbit();
     });
-    if (wrap.current) ro.observe(wrap.current);
+    ro.observe(wrap.current);
     return () => {
-      cancelAnimationFrame(raf);
       ro.disconnect();
+      cv.removeEventListener("webglcontextlost", onLost);
+      cv.removeEventListener("webglcontextrestored", onRestored);
+      S.current.cabin?.dispose();
+      mats.dispose();
+      stage.dispose();
+      cv.remove();
+      S.current = null;
     };
-  }, [faces, camNow, mode, sceneFar, eyeShown]);
+  }, []);
 
-  /* ---- touch ---- */
-  const localPt = (e) => {
+  /* ---- the model ---- */
+  useEffect(() => {
+    const s = S.current;
+    if (!s) return;
+    s.cabin?.dispose();
+    s.cabin = buildCabin(doc, defs, s.mats);
+    s.stage.setCabin(s.cabin);
+    s.segments = blockingSegments(doc);
     const r = wrap.current.getBoundingClientRect();
-    return {
-      x: e.clientX - r.left,
-      y: e.clientY - r.top,
-    };
-  };
-  const onDown = (e) => {
-    const p = localPt(e);
-    const now = Date.now();
-    for (const [id, q] of [...ptrs.current]) if (now - q.t > 4000) ptrs.current.delete(id);
-    // bottom-left corner in walk mode is the movement stick
-    if (
-      mode === "walk" &&
-      coarse &&
-      e.pointerType !== "mouse" &&
-      !stick.current.active &&
-      p.x < 132 &&
-      p.y > size.current.h - 132
-    ) {
-      stick.current = {
-        active: true,
-        id: e.pointerId,
-        ox: p.x,
-        oy: p.y,
-        dx: 0,
-        dy: 0,
-      };
-      return;
+    s.stage.resize(Math.max(1, Math.round(r.width)), Math.max(1, Math.round(r.height)));
+    applyVis();
+    if (live.current.mode === "orbit") {
+      setLens("orbit");
+      if (!userMoved.current) frameOrbit();
     }
-    ptrs.current.set(e.pointerId, {
-      x: p.x,
-      y: p.y,
-      t: now,
-    });
-    if (ptrs.current.size === 2) {
-      const [a, b] = [...ptrs.current.values()];
-      gest.current = {
-        type: "two",
-        d0: Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1),
-        m0: {
-          x: (a.x + b.x) / 2,
-          y: (a.y + b.y) / 2,
-        },
-        dist0: orb.current.dist,
-        t0: {
-          x: orb.current.tx,
-          y: orb.current.ty,
-        },
-      };
-      return;
-    }
-    gest.current = {
-      type: "one",
-      last: p,
-    };
-  };
-  const onMove = (e) => {
-    const s = stick.current;
-    if (s.active && s.id === e.pointerId) {
-      const p = localPt(e);
-      const dx = clamp((p.x - s.ox) / 52, -1, 1),
-        dy = clamp((p.y - s.oy) / 52, -1, 1);
-      stick.current = {
-        ...s,
-        dx,
-        dy,
-      };
-      tick((n) => n + 1);
-      return;
-    }
-    if (!ptrs.current.has(e.pointerId)) return;
-    const p = localPt(e);
-    ptrs.current.set(e.pointerId, {
-      x: p.x,
-      y: p.y,
-      t: Date.now(),
-    });
-    const g = gest.current;
-    if (!g) return;
-    const inv = invert ? -1 : 1;
-    if (g.type === "two" && ptrs.current.size >= 2) {
-      const [a, b] = [...ptrs.current.values()];
-      const d1 = Math.hypot(a.x - b.x, a.y - b.y);
-      const m1 = {
-        x: (a.x + b.x) / 2,
-        y: (a.y + b.y) / 2,
-      };
-      if (mode === "orbit") {
-        orb.current.dist = clamp(g.dist0 * (g.d0 / Math.max(d1, 1)), 800, 200000);
-        const az = orb.current.az;
-        // mm of world per screen pixel at the pivot distance
-        const k = (2 * orb.current.dist * Math.tan(0.85 / 2)) / Math.max(size.current.h, 1);
-        const dx = (m1.x - g.m0.x) * inv,
-          dy = (m1.y - g.m0.y) * inv;
-        const rx = Math.sin(az),
-          ry = -Math.cos(az); // camera right
-        const fx = Math.cos(az),
-          fy = Math.sin(az); // camera forward, flattened
-        orb.current.tx = g.t0.x + (-rx * dx + fx * dy) * k;
-        orb.current.ty = g.t0.y + (-ry * dx + fy * dy) * k;
-      }
-      dirty.current = true;
-      return;
-    }
-    if (g.type === "one") {
-      const dx = (p.x - g.last.x) * inv,
-        dy = (p.y - g.last.y) * inv;
-      g.last = p;
-      if (mode === "orbit") {
-        orb.current.az -= dx * 0.008;
-        orb.current.el = clamp(orb.current.el + dy * 0.008, -0.25, 1.45);
-      } else {
-        // same convention as orbit: drag the scene, don't steer the head
-        walk.current.yaw += dx * 0.005;
-        walk.current.pitch = clamp(walk.current.pitch + dy * 0.005, -1.3, 1.3);
-      }
-      dirty.current = true;
-    }
-  };
-  const onUp = (e) => {
-    if (stick.current.id === e.pointerId) {
-      stick.current = {
-        active: false,
-        dx: 0,
-        dy: 0,
-        id: null,
-        ox: 0,
-        oy: 0,
-      };
-      tick((n) => n + 1);
-      return;
-    }
-    ptrs.current.delete(e.pointerId);
-    if (ptrs.current.size === 0) gest.current = null;
-    else if (ptrs.current.size === 1)
-      gest.current = {
-        type: "one",
-        last: [...ptrs.current.values()][0],
-      };
-  };
-  useEffect(() => {
-    const m = (e) => onMove(e),
-      u = (e) => onUp(e);
-    const clear = () => {
-      ptrs.current.clear();
-      gest.current = null;
-      stick.current = {
-        active: false,
-        dx: 0,
-        dy: 0,
-        id: null,
-        ox: 0,
-        oy: 0,
-      };
-    };
-    window.addEventListener("pointermove", m, {
-      passive: false,
-    });
-    window.addEventListener("pointerup", u);
-    window.addEventListener("pointercancel", u);
-    window.addEventListener("blur", clear);
-    return () => {
-      window.removeEventListener("pointermove", m);
-      window.removeEventListener("pointerup", u);
-      window.removeEventListener("pointercancel", u);
-      window.removeEventListener("blur", clear);
-    };
-  });
+  }, [doc, defs]);
 
-  /* keyboard: WASD to move, QE for height, Shift to sprint, arrows to look */
+  useEffect(applyVis, [vis, mode]);
+
   useEffect(() => {
-    const norm = (e) => (e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase());
-    const handled = new Set([
-      "w",
-      "a",
-      "s",
-      "d",
-      "q",
-      "e",
-      "shift",
-      "+",
-      "=",
-      "-",
-      "_",
-      "arrowup",
-      "arrowdown",
-      "arrowleft",
-      "arrowright",
-    ]);
+    const s = S.current;
+    if (!s) return;
+    s.stage.controls.rotateSpeed = invert ? -0.9 : 0.9;
+    s.stage.controls.panSpeed = invert ? -1 : 1;
+  }, [invert]);
+
+  /* ---- switching between orbit and walk ---- */
+  const switchMode = (m) => {
+    const s = S.current;
+    if (!s || m === mode) return;
+    const cam = s.stage.camera;
+    if (m === "walk") {
+      orbitSaved.current = { pos: cam.position.clone(), target: s.stage.controls.target.clone() };
+      s.stage.controls.enabled = false;
+      const w = walker.current;
+      if (!w.started) {
+        const st = walkStart(doc, defs);
+        Object.assign(w, {
+          x: st.x,
+          y: st.y,
+          yaw: Math.atan2(-st.dir.x, -st.dir.y),
+          pitch: -0.08,
+          started: true,
+        });
+      }
+      w.target = null;
+      setLens("walk");
+      placeWalkCamera();
+    } else {
+      setLens("orbit");
+      const o = orbitSaved.current;
+      if (o) {
+        cam.position.copy(o.pos);
+        s.stage.controls.target.copy(o.target);
+      }
+      s.stage.controls.enabled = true;
+      s.stage.controls.update();
+      s.stage.invalidate();
+    }
+    setMode(m);
+  };
+
+  /* ---- the frame loop: move, then draw if anything changed ---- */
+  useEffect(() => {
+    let raf,
+      last = 0;
+    const k = (code) => (keys.current.has(code) ? 1 : 0);
+    const stepWalk = (dt) => {
+      const s = S.current;
+      const w = walker.current;
+      const st = stick.current;
+      let fwd = k("KeyW") - k("KeyS"),
+        side = k("KeyD") - k("KeyA");
+      if (st.active) {
+        fwd -= st.dy;
+        side += st.dx;
+      }
+      const turn = k("ArrowLeft") - k("ArrowRight"),
+        tilt = k("ArrowUp") - k("ArrowDown"),
+        rise = k("KeyE") - k("KeyQ");
+      const fast = k("ShiftLeft") || k("ShiftRight") ? 2.5 : 1;
+      let moved = false;
+      if (turn || tilt) {
+        w.yaw += turn * 1.7 * dt;
+        w.pitch = clamp(w.pitch + tilt * 1.2 * dt, -1.3, 1.3);
+        moved = true;
+      }
+      if (rise) {
+        w.eye = clamp(w.eye + rise * 1000 * fast * dt, 300, 40000);
+        setEyeShown(Math.round(w.eye / 10) * 10);
+        moved = true;
+      }
+      // high up, fly over the walls rather than bump into them
+      const segs = w.eye > 3500 ? [] : s.segments;
+      if (fwd || side) {
+        w.target = null;
+        const len = Math.hypot(fwd, side);
+        if (len > 1) {
+          fwd /= len;
+          side /= len;
+        }
+        const sp = WALK_SPEED * fast * dt;
+        // the camera looks along (-sin yaw, -cos yaw) in plan; its right is (cos yaw, -sin yaw)
+        const fx = -Math.sin(w.yaw),
+          fy = -Math.cos(w.yaw);
+        const rx = Math.cos(w.yaw),
+          ry = -Math.sin(w.yaw);
+        const p = walkMove(w, (fx * fwd + rx * side) * sp, (fy * fwd + ry * side) * sp, segs);
+        w.x = p.x;
+        w.y = p.y;
+        moved = true;
+      } else if (w.target) {
+        const dx = w.target.x - w.x,
+          dy = w.target.y - w.y,
+          d = Math.hypot(dx, dy);
+        if (d < 80) w.target = null;
+        else {
+          const step = Math.min(d, WALK_SPEED * dt);
+          const p = walkMove(w, (dx / d) * step, (dy / d) * step, segs);
+          const got = Math.hypot(p.x - w.x, p.y - w.y);
+          w.x = p.x;
+          w.y = p.y;
+          moved = true;
+          if (got < step * 0.25) w.target = null; // something is in the way
+        }
+      }
+      if (moved) placeWalkCamera();
+    };
+    const stepOrbitKeys = (dt) => {
+      const turn = k("KeyD") + k("ArrowRight") - k("KeyA") - k("ArrowLeft"),
+        tilt = k("KeyW") + k("ArrowUp") - k("KeyS") - k("ArrowDown"),
+        dolly = k("Equal") + k("NumpadAdd") - k("Minus") - k("NumpadSubtract");
+      if (!turn && !tilt && !dolly) return;
+      const { stage } = S.current;
+      const c = stage.controls,
+        cam = stage.camera;
+      const off = cam.position.clone().sub(c.target);
+      const sph = new THREE.Spherical().setFromVector3(off);
+      sph.theta += turn * 1.4 * dt;
+      sph.phi = clamp(sph.phi - tilt * 1.1 * dt, 0.05, c.maxPolarAngle);
+      sph.radius = clamp(sph.radius * (1 - dolly * 1.4 * dt), c.minDistance, c.maxDistance);
+      cam.position.copy(c.target).add(off.setFromSpherical(sph));
+      cam.lookAt(c.target);
+      userMoved.current = true;
+      stage.invalidate();
+    };
+    const loop = (ts) => {
+      raf = requestAnimationFrame(loop);
+      const s = S.current;
+      if (!s || !s.cabin || lostRef.current) return;
+      const dt = last ? Math.min(0.1, (ts - last) / 1000) : 0;
+      last = ts;
+      const orbit = live.current.mode === "orbit";
+      if (orbit) {
+        stepOrbitKeys(dt);
+        if (s.stage.controls.update()) s.stage.dirty = true;
+      } else stepWalk(dt);
+      if (s.stage.dirty) {
+        if (orbit) updateCutaway();
+        s.stage.render();
+      }
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  /* ---- keys: by physical key, so WASD works on any layout ---- */
+  useEffect(() => {
+    const typing = (e) => e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName || "");
     const down = (e) => {
-      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName || "")) return;
-      if (e.key === "Escape") {
-        onClose();
+      if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.code === "Escape" || e.key === "Escape") {
+        e.preventDefault();
+        live.current.onClose();
         return;
       }
-      const k = norm(e);
-      if (!handled.has(k)) return;
+      if (!KEYS.has(e.code)) return;
       e.preventDefault();
-      keys.current.add(k);
-      lastT.current = 0;
+      keys.current.add(e.code);
     };
-    const up = (e) => keys.current.delete(norm(e));
+    const up = (e) => keys.current.delete(e.code);
     const clear = () => keys.current.clear();
+    const hidden = () => document.hidden && clear();
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", clear);
+    document.addEventListener("visibilitychange", hidden);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", clear);
-      keys.current.clear();
+      document.removeEventListener("visibilitychange", hidden);
+      clear();
     };
-  }, [onClose]);
-  const Toggle = ({ k, label }) => (
-    <Btn
-      small={true}
-      active={vis[k]}
-      onClick={() =>
-        setVis((v) => ({
-          ...v,
-          [k]: !v[k],
-        }))
+  }, []);
+
+  /* ---- walking by touch: the stick, dragging to look, tapping to go ---- */
+  const localPt = (e) => {
+    const r = wrap.current.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top, h: r.height, w: r.width };
+  };
+  const resetStick = () => {
+    stick.current = { active: false, id: null, ox: 0, oy: 0, dx: 0, dy: 0 };
+    setStickUI({ active: false, dx: 0, dy: 0 });
+  };
+  const onDown = (e) => {
+    if (mode !== "walk") return;
+    if (e.target.closest && e.target.closest("button")) return; // the height buttons are not the floor
+    const p = localPt(e);
+    if (
+      coarse &&
+      e.pointerType !== "mouse" &&
+      !stick.current.active &&
+      p.x < 132 &&
+      p.y > p.h - 132
+    ) {
+      stick.current = { active: true, id: e.pointerId, ox: p.x, oy: p.y, dx: 0, dy: 0 };
+      walker.current.target = null;
+      setStickUI({ active: true, dx: 0, dy: 0 });
+      return;
+    }
+    if (look.current) return;
+    look.current = {
+      id: e.pointerId,
+      x: p.x,
+      y: p.y,
+      sx: p.x,
+      sy: p.y,
+      t: performance.now(),
+      moved: false,
+    };
+  };
+  const onMove = (e) => {
+    const st = stick.current;
+    if (st.active && st.id === e.pointerId) {
+      const p = localPt(e);
+      let dx = (p.x - st.ox) / 52,
+        dy = (p.y - st.oy) / 52;
+      const len = Math.hypot(dx, dy);
+      if (len > 1) {
+        dx /= len;
+        dy /= len;
       }
-    >
+      stick.current = { ...st, dx, dy };
+      setStickUI({ active: true, dx, dy });
+      return;
+    }
+    const L = look.current;
+    if (!L || L.id !== e.pointerId) return;
+    const p = localPt(e);
+    const dx = p.x - L.x,
+      dy = p.y - L.y;
+    L.x = p.x;
+    L.y = p.y;
+    if (Math.hypot(p.x - L.sx, p.y - L.sy) > TAP_SLOP) L.moved = true;
+    if (!L.moved) return;
+    // drag the scene: it follows the finger, as in orbit
+    const inv = live.current.invert ? -1 : 1;
+    const w = walker.current;
+    w.yaw += dx * 0.005 * inv;
+    w.pitch = clamp(w.pitch + dy * 0.005 * inv, -1.3, 1.3);
+    placeWalkCamera();
+  };
+  const onUp = (e) => {
+    if (stick.current.id === e.pointerId) {
+      resetStick();
+      return;
+    }
+    const L = look.current;
+    if (!L || L.id !== e.pointerId) return;
+    look.current = null;
+    if (e.type === "pointerup" && !L.moved && performance.now() - L.t < 600) goTo(L.sx, L.sy);
+  };
+  /* walk to the spot tapped on the floor (or on a piece of furniture);
+     a tap on a wall goes nowhere */
+  const goTo = (px, py) => {
+    const s = S.current;
+    if (!s || !s.cabin) return;
+    const r = wrap.current.getBoundingClientRect();
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(
+      new THREE.Vector2((px / r.width) * 2 - 1, -(py / r.height) * 2 + 1),
+      s.stage.camera,
+    );
+    const c = s.cabin;
+    const targets = [c.floors, s.stage.ground, c.furniture, ...c.walls.map((w) => w.obj)];
+    if (c.roof.visible) targets.push(c.roof);
+    const hit = ray.intersectObjects(
+      targets.filter((o) => o && o.visible),
+      true,
+    )[0];
+    if (!hit) return;
+    let o = hit.object;
+    while (o && o !== c.floors && o !== c.furniture && o !== s.stage.ground && o.parent)
+      o = o.parent;
+    if (o !== c.floors && o !== c.furniture && hit.object !== s.stage.ground) return;
+    walker.current.target = { x: hit.point.x / MM, y: hit.point.z / MM };
+  };
+  useEffect(() => {
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    const clear = () => {
+      look.current = null;
+      resetStick();
+    };
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("blur", clear);
+    };
+  });
+
+  const setEye = (v) => {
+    walker.current.eye = clamp(v, 300, 40000);
+    setEyeShown(Math.round(walker.current.eye));
+    if (mode === "walk") placeWalkCamera();
+  };
+  const roofKey = mode === "walk" ? "roofWalk" : "roofOrbit";
+  const Toggle = ({ k, label }) => (
+    <Btn small={true} active={vis[k]} onClick={() => setVis((v) => ({ ...v, [k]: !v[k] }))}>
       {label}
     </Btn>
   );
-  const st = stick.current;
+  const st = stickUI;
+  const pill = {
+    background: "rgba(27,37,40,0.8)",
+    border: `1px solid ${C.line}`,
+    color: C.text,
+    cursor: "pointer",
+  };
   return (
     <div
       style={{
@@ -492,6 +574,7 @@ export function View3D({ doc, defs, lang, t, onClose, invert, setInvert }) {
       >
         <button
           onClick={onClose}
+          aria-label={t("close")}
           style={{
             background: C.chrome3,
             border: `1px solid ${C.line}`,
@@ -505,23 +588,17 @@ export function View3D({ doc, defs, lang, t, onClose, invert, setInvert }) {
         >
           ✕
         </button>
-        <Btn small={true} active={mode === "orbit"} onClick={() => setMode("orbit")}>
+        <Btn small={true} active={mode === "orbit"} onClick={() => switchMode("orbit")}>
           {t("orbit")}
         </Btn>
-        <Btn small={true} active={mode === "walk"} onClick={() => setMode("walk")}>
+        <Btn small={true} active={mode === "walk"} onClick={() => switchMode("walk")}>
           {t("walk")}
         </Btn>
         <Btn small={true} active={invert} onClick={() => setInvert(!invert)}>
           {t("invertDrag")}
         </Btn>
-        <div
-          style={{
-            display: "flex",
-            gap: 5,
-            marginLeft: "auto",
-          }}
-        >
-          <Toggle k="roof" label={t("roofOn")} />
+        <div style={{ display: "flex", gap: 5, marginLeft: "auto" }}>
+          <Toggle k={roofKey} label={t("roofOn")} />
           <Toggle k="walls" label={t("wallsTab")} />
           <Toggle k="furniture" label={t("furniture")} />
         </div>
@@ -534,17 +611,11 @@ export function View3D({ doc, defs, lang, t, onClose, invert, setInvert }) {
           flex: 1,
           touchAction: "none",
           overflow: "hidden",
-          cursor: "grab",
+          cursor: mode === "walk" ? "crosshair" : "grab",
+          background: "#DCE5E8",
         }}
       >
-        <canvas
-          ref={cvRef}
-          style={{
-            display: "block",
-            position: "absolute",
-            inset: 0,
-          }}
-        />
+        <div ref={host} style={{ position: "absolute", inset: 0 }} />
         {mode === "walk" && (
           <React.Fragment>
             {coarse && (
@@ -556,7 +627,7 @@ export function View3D({ doc, defs, lang, t, onClose, invert, setInvert }) {
                   width: 92,
                   height: 92,
                   borderRadius: 46,
-                  border: `1.5px solid ${st.active ? C.accent : "rgba(255,255,255,0.5)"}`,
+                  border: `1.5px solid ${st.active ? C.accent : "rgba(255,255,255,0.6)"}`,
                   background: "rgba(27,37,40,0.28)",
                   pointerEvents: "none",
                 }}
@@ -569,7 +640,7 @@ export function View3D({ doc, defs, lang, t, onClose, invert, setInvert }) {
                     width: 34,
                     height: 34,
                     borderRadius: 17,
-                    background: st.active ? C.accent : "rgba(255,255,255,0.72)",
+                    background: st.active ? C.accent : "rgba(255,255,255,0.78)",
                   }}
                 />
               </div>
@@ -590,32 +661,21 @@ export function View3D({ doc, defs, lang, t, onClose, invert, setInvert }) {
               ].map(([l, d]) => (
                 <button
                   key={l}
-                  onClick={() => setEye(eyeRef.current + d)}
-                  style={{
-                    width: 42,
-                    height: 42,
-                    borderRadius: 12,
-                    background: "rgba(27,37,40,0.8)",
-                    border: `1px solid ${C.line}`,
-                    color: C.text,
-                    fontSize: 19,
-                    cursor: "pointer",
-                  }}
+                  onClick={() => setEye(walker.current.eye + d)}
+                  style={{ ...pill, width: 42, height: 42, borderRadius: 12, fontSize: 19 }}
                 >
                   {l}
                 </button>
               ))}
               <button
-                onClick={() => setEye(1650)}
+                onClick={() => setEye(EYE)}
                 style={{
+                  ...pill,
                   width: 42,
                   borderRadius: 10,
-                  background: "rgba(27,37,40,0.8)",
-                  border: `1px solid ${C.line}`,
                   color: C.dim,
                   fontSize: 9,
                   padding: "5px 0",
-                  cursor: "pointer",
                   fontFamily: MONO,
                 }}
               >
@@ -629,25 +689,36 @@ export function View3D({ doc, defs, lang, t, onClose, invert, setInvert }) {
             position: "absolute",
             left: 12,
             top: 10,
+            right: 12,
             fontFamily: MONO,
             fontSize: 10.5,
-            color: "rgba(30,40,42,0.65)",
+            color: "rgba(30,40,42,0.7)",
             pointerEvents: "none",
             lineHeight: 1.5,
           }}
         >
           {mode === "orbit" ? t("orbitHint") : t("walkHint")}
           {!coarse && <div>{t("keysHint")}</div>}
-          {gpu === false && (
-            <div
-              style={{
-                color: "rgba(150,60,40,0.85)",
-              }}
-            >
-              {t("noGpu")}
-            </div>
-          )}
         </div>
+        {(failed || lost) && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 24,
+              background: failed ? C.chrome : "rgba(27,37,40,0.6)",
+              color: C.text,
+              fontSize: 14,
+              lineHeight: 1.5,
+              textAlign: "center",
+            }}
+          >
+            {failed ? t("noWebgl") : t("glLost")}
+          </div>
+        )}
       </div>
     </div>
   );

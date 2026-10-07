@@ -19,6 +19,8 @@ export default defineConfig(({ mode }) => {
       outDir: single ? "dist-single" : "dist",
       emptyOutDir: true,
       target: "es2020",
+      // the 3D view's chunk is mostly three.js, loaded only when 3D opens
+      chunkSizeWarningLimit: 800,
     },
     test: {
       environment: "node",

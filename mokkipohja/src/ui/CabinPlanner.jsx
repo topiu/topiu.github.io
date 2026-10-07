@@ -41,7 +41,7 @@ import { ShapeEditor } from "./ShapeEditor";
 import { Btn, Label, NumField, Sheet } from "./atoms";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { Glyph } from "./glyphs";
-import { View3D } from "../view3d/View3D";
+import { View3DLoader, prefetch3D } from "./View3DLoader";
 
 /* ============================================================
    Main app
@@ -207,6 +207,17 @@ export function CabinPlanner() {
     const tm = setTimeout(() => setConfirmDel(null), 3000);
     return () => clearTimeout(tm);
   }, [confirmDel]);
+
+  /* fetch the 3D view while nothing else is going on, so it opens at once */
+  useEffect(() => {
+    if (!ready) return undefined;
+    if (window.requestIdleCallback) {
+      const id = window.requestIdleCallback(prefetch3D, { timeout: 5000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = setTimeout(prefetch3D, 2000);
+    return () => clearTimeout(id);
+  }, [ready]);
 
   /* Every switch to another plan goes through here. The leaving plan's pending
      edits are written first, and its undo history goes with it: kept, Undo
@@ -3786,10 +3797,9 @@ export function CabinPlanner() {
       </div>
       {show3d && (
         <ErrorBoundary lang={lang} onClose={() => setShow3d(false)}>
-          <View3D
+          <View3DLoader
             doc={doc}
             defs={defs}
-            lang={lang}
             t={t}
             onClose={() => setShow3d(false)}
             invert={invert3d}
