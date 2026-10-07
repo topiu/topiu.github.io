@@ -23,6 +23,21 @@ export const C = {
   accent2: "#66CDD3",
   bad: "#B4402F",
 };
+/* Furniture group colours, shared by the plan and the 3D view. */
+export const GROUP = {
+  sleep: "#7C93A8",
+  live: "#C3924F",
+  kitchen: "#8FA86B",
+  heat: "#B4602F",
+  sauna: "#A87F52",
+  store: "#8C8C7A",
+  custom: "#9A8FB0",
+};
+const rgbOf = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+/* a colour at an opacity, and a colour darkened (k < 1) or lightened (k > 1) */
+export const tint = (h, a) => `rgba(${rgbOf(h).join(",")},${a})`;
+export const shade = (h, k) =>
+  "#" + rgbOf(h).map((v) => Math.round(Math.min(255, v * k)).toString(16).padStart(2, "0")).join("");
 export const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace';
 export const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif';
 export const D2R = Math.PI / 180;

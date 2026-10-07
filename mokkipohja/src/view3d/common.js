@@ -1,4 +1,4 @@
-import { clamp } from "../core";
+import { GROUP, clamp } from "../core";
 
 /* ============================================================
    3D — flat-shaded painter's algorithm straight onto canvas 2D.
@@ -16,15 +16,7 @@ export const C3 = {
   wall: "#DBD6C7",
   wallTop: "#BFB9A6",
   reveal: "#C6C0AE",
-  grp: {
-    sleep: "#7C93A8",
-    live: "#C3924F",
-    kitchen: "#8FA86B",
-    heat: "#B4602F",
-    sauna: "#A87F52",
-    store: "#8C8C7A",
-    custom: "#9A8FB0",
-  },
+  grp: GROUP,
   bad: "#B4402F",
 };
 export function hex2rgb(h) {
