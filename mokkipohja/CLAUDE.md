@@ -114,3 +114,20 @@ shared slope lifted the nearer eave above the eaves height. `ceilingAt` and
 size. Any extra margin rescales a sheet whose title block states a scale.
 
 **Use `??`, not `||`, for numbers that can be 0** (heights, offsets).
+
+## Design rules
+
+- **The bar holds six buttons:** five drawing tools and More. More shows the
+  active tool when one of its tools is on. 3D is the floating button above
+  zoom. Check the labels at 320–430 px in both languages: Finnish runs long
+  (KALUSTEET).
+- **Names go through `fitLabel`** (`domain/labels.js`), so no label is drawn
+  wider than its outline. Room labels go through `placeRoomLabel`, so they
+  never sit on furniture.
+- **`planConflicts`** (`domain/plancheck.js`) is the only source of furniture
+  warnings: overlaps (a chair may tuck under a table) and door swings. The plan
+  hatches what it reports, and the item panel says which problem it is.
+- **`GROUP` in `core.js` holds the group colours** shared by the plan, the
+  library and 3D. The export sheet stays monochrome for printing.
+- **The first visit follows the phone's language;** a saved choice always
+  wins. `<html lang>` follows the app's language.
