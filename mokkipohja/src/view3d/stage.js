@@ -7,9 +7,38 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
    shadows only when the model or what is shown of it changes, not when the
    camera moves: on a phone most frames then cost nothing. */
 
-const SKY_TOP = "#7FA6C6";
-const HORIZON = "#DCE5E8";
-const SUN_HEIGHT = 0.68; // the sun's direction's upward part: about 43° up
+const SUN_HEIGHT = 0.68; // the default sun's direction's upward part: about 43° up
+
+/* How the light looks with the sun at a given height, from deep night to
+   full day: sky, haze at the horizon (also the fog), the sun's colour and
+   strength, sky light, reflections, exposure. Blended between the rows. */
+const DAYLIGHT = [
+  [-12, "#0A1322", "#1A2436", "#000000", 0, 0.16, 0.04, 1.15],
+  [-4, "#22375A", "#7D7488", "#FF9050", 0, 0.42, 0.1, 1.1],
+  [2, "#4A729F", "#EDB088", "#FF9A55", 1.1, 0.72, 0.18, 1.05],
+  [10, "#6C96BF", "#E6D3BD", "#FFD2A0", 2.0, 0.98, 0.26, 1.05],
+  [28, "#7FA6C6", "#DCE5E8", "#FFF0DC", 2.4, 1.15, 0.3, 1.05],
+];
+function daylight(el) {
+  const k = DAYLIGHT;
+  let i = k.findIndex((row) => el <= row[0]);
+  if (i === -1) i = k.length - 1;
+  if (i === 0) i = 1;
+  const a = k[i - 1],
+    b = k[i];
+  const t = Math.min(1, Math.max(0, (el - a[0]) / (b[0] - a[0])));
+  const col = (n) => new THREE.Color(a[n]).lerp(new THREE.Color(b[n]), t);
+  const num = (n) => a[n] + (b[n] - a[n]) * t;
+  return {
+    top: col(1),
+    horizon: col(2),
+    sun: col(3),
+    sunI: num(4),
+    hemi: num(5),
+    env: num(6),
+    exposure: num(7),
+  };
+}
 
 export class Stage {
   constructor(canvas) {
@@ -23,11 +52,9 @@ export class Stage {
     r.shadowMap.type = THREE.PCFShadowMap;
     r.shadowMap.autoUpdate = false;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 1.05;
-    r.setClearColor(HORIZON);
     this.renderer = r;
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(HORIZON, 60, 400);
+    this.scene.fog = new THREE.Fog("#DCE5E8", 60, 400);
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
     this.dirty = true;
     this.shadows = true;
@@ -57,8 +84,10 @@ export class Stage {
         depthTest: false,
         toneMapped: false,
         uniforms: {
-          top: { value: new THREE.Color(SKY_TOP) },
-          horizon: { value: new THREE.Color(HORIZON) },
+          top: { value: new THREE.Color() },
+          horizon: { value: new THREE.Color() },
+          sunDir: { value: new THREE.Vector3(0, 1, 0) },
+          glow: { value: new THREE.Color(0, 0, 0) },
         },
         vertexShader: /* glsl */ `
           varying vec3 vDir;
@@ -70,10 +99,16 @@ export class Stage {
         fragmentShader: /* glsl */ `
           uniform vec3 top;
           uniform vec3 horizon;
+          uniform vec3 sunDir;
+          uniform vec3 glow;
           varying vec3 vDir;
           void main() {
-            float h = max(vDir.y, 0.0);
-            gl_FragColor = vec4(mix(horizon, top, pow(h, 0.55)), 1.0);
+            vec3 d = normalize(vDir);
+            float h = max(d.y, 0.0);
+            float s = max(dot(d, sunDir), 0.0);
+            vec3 col = mix(horizon, top, pow(h, 0.55));
+            col += glow * (pow(s, 900.0) * 4.0 + pow(s, 14.0) * 0.16); // the sun, and the glow round it
+            gl_FragColor = vec4(col, 1.0);
             #include <colorspace_fragment>
           }`,
       }),
@@ -99,7 +134,10 @@ export class Stage {
     });
 
     this.cabin = null;
-    this.sunDir = new THREE.Vector3(-0.52, SUN_HEIGHT, 0.54).normalize();
+    this.sunDir = new THREE.Vector3();
+    this.studio = new THREE.Vector3(-0.52, SUN_HEIGHT, 0.54).normalize();
+    this.study = false;
+    this.light(this.studio, 40);
   }
 
   /* textures look sharper at a slant with anisotropic filtering */
@@ -133,14 +171,49 @@ export class Stage {
     this.invalidate(true);
   }
 
-  /* the sun's horizontal direction (plan x, plan y), towards the sun */
-  setSun(x, y) {
+  /* The usual light, a fine afternoon with the sun from where it shows the
+     model best: x, y its horizontal direction in plan axes. */
+  setStudioSun(x, y) {
     const k = Math.sqrt(1 - SUN_HEIGHT * SUN_HEIGHT) / (Math.hypot(x, y) || 1);
-    this.sunDir.set(x * k, SUN_HEIGHT, y * k);
+    this.studio.set(x * k, SUN_HEIGHT, y * k);
+    if (!this.study) this.light(this.studio, 40);
+  }
+
+  /* The sun where it really is, for the sun study: dir towards it in plan
+     axes ({ x, y, up }), elevation in degrees. */
+  setStudySun(dir, elevation) {
+    this.study = true;
+    this.light(new THREE.Vector3(dir.x, dir.up, dir.y), elevation);
+  }
+
+  endStudy() {
+    if (!this.study) return;
+    this.study = false;
+    this.light(this.studio, 40);
+  }
+
+  light(dir, elevation) {
+    const d = daylight(elevation);
+    this.sunDir.copy(dir).normalize();
+    const u = this.sky.material.uniforms;
+    u.top.value.copy(d.top);
+    u.horizon.value.copy(d.horizon);
+    u.sunDir.value.copy(this.sunDir);
+    u.glow.value.copy(d.sun).multiplyScalar(elevation > -2 ? 1 : 0);
+    this.scene.fog.color.copy(d.horizon);
+    this.renderer.setClearColor(d.horizon);
+    this.sun.color.copy(d.sun);
+    this.sun.intensity = d.sunI;
+    this.hemi.intensity = d.hemi;
+    this.scene.environmentIntensity = d.env;
+    this.renderer.toneMappingExposure = d.exposure;
     this.placeSun();
   }
 
-  /* the sun's shadow camera just covers the model and its eaves */
+  /* The sun's shadow camera covers the model and its eaves. Seen from the
+     sun, a shadow on the ground is never longer than what casts it is tall,
+     but it lies far off along the sun's direction when the sun is low, so
+     the camera reaches deep. */
   placeSun() {
     if (!this.cabin) return;
     const { centre, radius } = this.cabin.bounds;
@@ -152,7 +225,7 @@ export class Stage {
     cam.left = cam.bottom = -reach;
     cam.right = cam.top = reach;
     cam.near = 0.1;
-    cam.far = reach * 6;
+    cam.far = reach * 6 + 80;
     cam.updateProjectionMatrix();
     this.invalidate(true);
   }

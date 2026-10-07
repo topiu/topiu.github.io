@@ -138,7 +138,15 @@ size. Any extra margin rescales a sheet whose title block states a scale.
   frame.
 - **Fog is mixed in after tone mapping,** in the output colour. So the sky
   shader is not tone mapped: its horizon must come out exactly the fog colour,
-  or the ground meets the sky in a visible band.
+  or the ground meets the sky in a visible band. The sun study changes both
+  together (`light` in `stage.js`).
+- **Lights are not switched on and off;** their intensity goes to 0. Changing
+  how many lights are on recompiles every material, a visible stall on a
+  phone. Room lights cast no shadows and so shine through walls: they are up
+  only in walk mode.
+- **The model is rebuilt only when walls, rooms, openings, items or the
+  library change,** not for the plan's `site`, which the sun study edits
+  while the view is open.
 - **Close cleans up:** cabin geometry, then materials, then the renderer, with
   `forceContextLoss`, so opening and closing 3D repeatedly does not leak
   WebGL contexts.

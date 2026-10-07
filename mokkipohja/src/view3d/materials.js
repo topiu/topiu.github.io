@@ -85,8 +85,21 @@ export function makeMaterials() {
     ),
     stones: ["#77736D", "#5F5B57", "#8E8983"].map((c) => std({ color: c, roughness: 0.95 })),
     bins: ["#D8D3C6", "#6F7F8C", "#B8A27A"].map((c) => std({ color: c, roughness: 0.6 })),
-    // a piece that does not fit under the ceiling where it stands
-    bad: std({ color: "#C0503C", roughness: 0.6, emissive: "#5A1208", emissiveIntensity: 0.35 }),
+    // a piece that does not fit under the ceiling where it stands: a red
+    // shell over its own materials, so it still looks like what it is, and
+    // red edges
+    badShell: keep(
+      new THREE.MeshBasicMaterial({
+        color: "#E0402F",
+        transparent: true,
+        opacity: 0.32,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -2,
+      }),
+    ),
+    badEdge: keep(new THREE.LineBasicMaterial({ color: "#FF4A2E" })),
     // soft contact shadows: under furniture, and along the foot of walls
     shadow: decal(softShadowTexture(), 0.4),
     edgeShadow: decal(edgeShadowTexture(), 0.32),

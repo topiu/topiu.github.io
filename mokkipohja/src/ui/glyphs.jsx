@@ -75,6 +75,18 @@ export function Glyph({ name, size = 21 }) {
         <circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none" />
       </React.Fragment>
     ),
+    sun: (
+      <React.Fragment>
+        <circle cx="12" cy="12" r="4.2" />
+        <path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" />
+      </React.Fragment>
+    ),
+    camera: (
+      <React.Fragment>
+        <path d="M3 8.5h4l1.6-2.5h6.8L17 8.5h4V19H3Z" />
+        <circle cx="12" cy="13.3" r="3.5" />
+      </React.Fragment>
+    ),
     cube: (
       <React.Fragment>
         <path d="M12 2.6 21 7.4v9.2L12 21.4 3 16.6V7.4Z" />
