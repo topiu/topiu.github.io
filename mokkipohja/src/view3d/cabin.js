@@ -92,7 +92,7 @@ export function buildCabin(doc, defs, mats) {
     bounds: bounds(doc, defs, rooms, pieces),
     dispose() {
       group.traverse((o) => {
-        if (o.isMesh && !o.userData.shared) o.geometry.dispose();
+        if ((o.isMesh || o.isLine) && !o.userData.shared) o.geometry.dispose();
       });
       shadowQuad.dispose();
     },
@@ -355,7 +355,7 @@ function buildWall(piece, e, doc, rooms, mats, centre) {
       new THREE.Vector3(nx, 0, ny),
     )
     .setPosition(piece.x1 * MM, 0, piece.y1 * MM);
-  const J = new Parts(null);
+  const J = new Parts();
   const extSide = ext[1] && !ext[-1] ? 1 : ext[-1] && !ext[1] ? -1 : 0;
   for (const o of ops) joinery(J, frame, o, t2, extSide, e, H, mats);
   for (const m of J.meshes()) frame.add(m);

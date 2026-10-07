@@ -21,7 +21,7 @@ import { seedL } from "../domain/library";
    into one mesh per material, to keep the draw calls down. */
 
 export function furnitureModel(def, mats, { bad = false, seed = "" } = {}) {
-  const P = new Parts(bad ? mats.bad : null);
+  const P = new Parts();
   const out = defOutline(def);
   const b = out.length ? bbox(out) : { w: 500, h: 500 };
   const d = {
@@ -38,15 +38,23 @@ export function furnitureModel(def, mats, { bad = false, seed = "" } = {}) {
     raised(P, mats, def, d);
   }
   const g = new THREE.Group();
-  for (const mesh of P.meshes()) g.add(mesh);
+  for (const mesh of P.meshes()) {
+    g.add(mesh);
+    if (!bad) continue;
+    // too tall for where it stands: a red shell and red edges over the model
+    const shell = new THREE.Mesh(mesh.geometry, mats.badShell);
+    shell.userData.shared = true; // the geometry is the mesh's
+    shell.renderOrder = 2;
+    g.add(shell);
+    g.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 35), mats.badEdge));
+  }
   return g;
 }
 
 /* ---------- building blocks ---------- */
 
 export class Parts {
-  constructor(override) {
-    this.override = override;
+  constructor() {
     this.by = new Map();
   }
   clear() {
@@ -54,7 +62,7 @@ export class Parts {
     this.by.clear();
   }
   add(mat, g) {
-    const m = this.override || mat;
+    const m = mat;
     if (!this.by.has(m)) this.by.set(m, []);
     if (g.index) {
       const flat = g.toNonIndexed();

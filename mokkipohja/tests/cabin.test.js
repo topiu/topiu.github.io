@@ -185,15 +185,26 @@ describe("furniture in 3D", () => {
     expect(used).toEqual([mats.paint(GROUP.live, 1.0, 0.7)]);
   });
 
-  it("turns a piece red where it does not fit under the ceiling, and stands it where the plan does", () => {
+  it("outlines a piece in red where it does not fit under the ceiling, and stands it where the plan does", () => {
     const wardrobe = lib.find((x) => x.key === "wardrobe"); // 2000 high
     const room = rect("R", 0, 0, 4000, 3000, { mode: "flat", h: 1800 });
     const d = plan([room], [], [{ id: "w", defId: wardrobe.id, x: 1000, y: 500, rot: 90 }]);
     const c = buildCabin(d, defsOf(lib), mats);
     const model = c.furniture.children[0];
     const used = new Set();
-    model.traverse((o) => o.isMesh && o.material !== mats.shadow && used.add(o.material));
-    expect([...used]).toEqual([mats.bad]);
+    model.traverse((o) => (o.isMesh || o.isLine) && used.add(o.material));
+    expect(used.has(mats.badShell)).toBe(true);
+    expect(used.has(mats.badEdge)).toBe(true);
+    expect(used.has(mats.white)).toBe(true); // still a wardrobe under the red
+    // and a piece that fits has none of it
+    const ok = buildCabin(
+      { ...d, rooms: [{ ...room, ceiling: { mode: "flat", h: 2400 } }] },
+      defsOf(lib),
+      mats,
+    );
+    const plain = new Set();
+    ok.furniture.children[0].traverse((o) => (o.isMesh || o.isLine) && plain.add(o.material));
+    expect(plain.has(mats.badShell)).toBe(false);
     expect(model.position.x).toBeCloseTo(1.0);
     expect(model.position.z).toBeCloseTo(0.5);
     expect(model.rotation.y).toBeCloseTo(-Math.PI / 2);
