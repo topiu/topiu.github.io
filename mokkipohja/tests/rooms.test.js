@@ -64,3 +64,45 @@ describe("room walls", () => {
     expect(d2.openings).toEqual([]);
   });
 });
+
+describe("per-edge offsets (roof overhangs)", () => {
+  const sq = [
+    { x: 0, y: 0 },
+    { x: 4000, y: 0 },
+    { x: 4000, y: 3000 },
+    { x: 0, y: 3000 },
+  ];
+  it("pushes every edge out by its own distance, in either winding", async () => {
+    const { offsetEdges } = await import("../src/domain/rooms");
+    for (const pts of [sq, [...sq].reverse()]) {
+      const o = offsetEdges(pts, pts.map(() => 500));
+      const xs = o.map((p) => p.x),
+        ys = o.map((p) => p.y);
+      expect([Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]).toEqual([-500, 4500, -500, 3500]);
+    }
+  });
+  it("leaves a shared edge where it is", async () => {
+    const { offsetEdges } = await import("../src/domain/rooms");
+    const o = offsetEdges(sq, [500, 0, 500, 500]); // the right edge is shared with the next room
+    expect(Math.max(...o.map((p) => p.x))).toBeCloseTo(4000);
+    expect(Math.min(...o.map((p) => p.y))).toBeCloseTo(-500);
+  });
+});
+
+describe("splitting a room along its ridge", () => {
+  it("gives two halves that add up to the room", async () => {
+    const { clipHalf, polyArea } = await import("../src/domain/geometry");
+    const L = [
+      { x: 0, y: 0 },
+      { x: 6000, y: 0 },
+      { x: 6000, y: 3000 },
+      { x: 3000, y: 3000 },
+      { x: 3000, y: 6000 },
+      { x: 0, y: 6000 },
+    ];
+    const a = Math.abs(polyArea(clipHalf(L, "x", 2000, true)));
+    const b = Math.abs(polyArea(clipHalf(L, "x", 2000, false)));
+    expect(a + b).toBeCloseTo(Math.abs(polyArea(L)));
+    expect(a).toBeCloseTo(2000 * 6000);
+  });
+});

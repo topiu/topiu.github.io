@@ -248,3 +248,24 @@ export function triangulate(poly) {
   if (idx.length === 3) tris.push([idx[0], idx[1], idx[2]]);
   return tris;
 }
+
+/* The part of a polygon on one side of a line x = value (axis "x") or
+   y = value (axis "y"); keepBelow keeps the smaller side. Splitting a room
+   along its ridge gives the two halves of a gable roof, each one plane. */
+export function clipHalf(poly, axis, value, keepBelow) {
+  const coord = (p) => (axis === "x" ? p.x : p.y);
+  const inside = (p) => (keepBelow ? coord(p) <= value : coord(p) >= value);
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i],
+      b = poly[(i + 1) % poly.length];
+    const ai = inside(a),
+      bi = inside(b);
+    if (ai) out.push(a);
+    if (ai !== bi) {
+      const t = (value - coord(a)) / (coord(b) - coord(a) || 1);
+      out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+  return out;
+}

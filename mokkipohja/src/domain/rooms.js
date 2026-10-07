@@ -340,3 +340,107 @@ export function snapRoomVertex(p, pts, i, doc, grid, tol) {
     kind: null,
   };
 }
+
+/* Push each edge of a polygon outward by its own distance (0 keeps it in
+   place) and join neighbouring edges with a mitre. A roof overhangs the
+   outside walls but not an edge shared with the next room, where two
+   overhangs would overlap. Where an edge runs straight on into one with
+   another distance, the outline steps square, so it can have more corners
+   than the polygon. */
+export function offsetEdges(pts, dists) {
+  const n = pts.length;
+  const edges = pts.map((p, i) => {
+    const q = pts[(i + 1) % n];
+    const L = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+    return { p, ux: (q.x - p.x) / L, uy: (q.y - p.y) / L };
+  });
+  // which normal points out: test just off the middle of the first edge
+  const e0 = edges[0];
+  const L0 = Math.hypot(pts[1 % n].x - pts[0].x, pts[1 % n].y - pts[0].y);
+  const mid = { x: pts[0].x + e0.ux * L0 * 0.5, y: pts[0].y + e0.uy * L0 * 0.5 };
+  const probe = { x: mid.x - e0.uy, y: mid.y + e0.ux };
+  const sign = pointInPolyLocal(probe, pts) ? -1 : 1; // (-uy, ux) * sign points out
+  const lines = edges.map((e, i) => {
+    const nx = -e.uy * sign,
+      ny = e.ux * sign;
+    return { x: e.p.x + nx * dists[i], y: e.p.y + ny * dists[i], ux: e.ux, uy: e.uy, nx, ny, d: dists[i] };
+  });
+  return pts.flatMap((p, i) => {
+    const a = lines[(i - 1 + n) % n],
+      b = lines[i];
+    const cross = a.ux * b.uy - a.uy * b.ux;
+    if (Math.abs(cross) < 1e-9) {
+      // straight on with a different offset: step out or in, square
+      if (Math.abs(a.d - b.d) > 1e-6 && a.ux * b.ux + a.uy * b.uy > 0)
+        return [
+          { x: p.x + a.nx * a.d, y: p.y + a.ny * a.d },
+          { x: p.x + b.nx * b.d, y: p.y + b.ny * b.d },
+        ];
+      return [{ x: p.x + b.nx * b.d, y: p.y + b.ny * b.d }];
+    }
+    const t = ((b.x - a.x) * b.uy - (b.y - a.y) * b.ux) / cross;
+    const q = { x: a.x + a.ux * t, y: a.y + a.uy * t };
+    const lim = Math.max(Math.abs(a.d), Math.abs(b.d)) * 6 + 1;
+    return [Math.hypot(q.x - p.x, q.y - p.y) > lim ? { x: p.x + b.nx * b.d, y: p.y + b.ny * b.d } : q];
+  });
+}
+function pointInPolyLocal(p, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i],
+      b = poly[j];
+    if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+/* Where other rooms lie right beyond a room's edges. For each edge, the
+   stretches of it (mm from its start) that run alongside another room's
+   edge, facing it, at most 400 mm away and at least 100 mm long, with the gap
+   between the two. A roof overhangs the rest of the edge; over a shared
+   stretch it reaches halfway across the gap, to meet the neighbour's roof.
+   Rooms drawn edge to edge have gap 0; rooms drawn as inner spaces leave a
+   wall's width between them. A map of room id to one list of { a, b, gap }
+   per edge. */
+export function roomEdgeShares(doc) {
+  const rooms = doc.rooms.filter((r) => r.points && r.points.length > 2);
+  const edges = rooms.flatMap((r) => {
+    const n = r.points.length;
+    const s = polySigned(r.points) > 0 ? 1 : -1;
+    return r.points.map((p, i) => {
+      const q = r.points[(i + 1) % n];
+      const L = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+      const ux = (q.x - p.x) / L,
+        uy = (q.y - p.y) / L;
+      return { room: r.id, i, p, q, L, ux, uy, ox: uy * s, oy: -ux * s };
+    });
+  });
+  const out = new Map(rooms.map((r) => [r.id, r.points.map(() => [])]));
+  for (const e of edges)
+    for (const f of edges) {
+      if (f.room === e.room) continue;
+      if (Math.abs(e.ux * f.uy - e.uy * f.ux) > 0.01) continue; // not parallel
+      if (e.ox * f.ox + e.oy * f.oy > -0.99) continue; // not facing each other
+      const gap = (f.p.x - e.p.x) * e.ox + (f.p.y - e.p.y) * e.oy;
+      if (gap < -10 || gap > 400) continue;
+      const a = (f.p.x - e.p.x) * e.ux + (f.p.y - e.p.y) * e.uy,
+        b = (f.q.x - e.p.x) * e.ux + (f.q.y - e.p.y) * e.uy;
+      const lo = Math.max(0, Math.min(a, b)),
+        hi = Math.min(e.L, Math.max(a, b));
+      if (hi - lo >= 100) out.get(e.room)[e.i].push({ a: lo, b: hi, gap: Math.max(0, gap) });
+    }
+  // two neighbours along one edge may overlap: merge them, keeping the nearer
+  for (const list of out.values())
+    list.forEach((spans, i) => {
+      const merged = [];
+      for (const sp of spans.sort((x, y) => x.a - y.a)) {
+        const last = merged[merged.length - 1];
+        if (last && sp.a <= last.b) {
+          last.b = Math.max(last.b, sp.b);
+          last.gap = Math.min(last.gap, sp.gap);
+        } else merged.push({ ...sp });
+      }
+      list[i] = merged;
+    });
+  return out;
+}
