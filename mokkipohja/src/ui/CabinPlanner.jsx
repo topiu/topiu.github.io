@@ -4,7 +4,7 @@ import { fitLabel, labelRect, placeRoomLabel } from "../domain/labels";
 import { planConflicts } from "../domain/plancheck";
 import { ceilingCrossings, defaultCeiling, headroomFor, roomAt } from "../domain/ceilings";
 import { bbox, defOutline, distToSeg, itemPoly, itemPolyTest, pointInPoly, polyArea, polysIntersect, raySpan, rotP, wallPoly, wallPolyTest } from "../domain/geometry";
-import { seedLibrary } from "../domain/library";
+import { backEdges, seedLibrary } from "../domain/library";
 import { DEF_WALL_H, openHead, openSill } from "../domain/openings";
 import {
   deleteRoomCorner,
@@ -2089,6 +2089,28 @@ export function CabinPlanner() {
                   stroke={isSel ? C.accent : bad ? C.bad : shade(gc, 0.72)}
                   strokeWidth={isSel ? 2.4 : 1.5}
                 />
+                {/* the back of a piece that faces one way, the side for the wall:
+                    in 3D it faces away from this edge */}
+                {backEdges(def).map(([a, b], i) => {
+                  const at = (p) => {
+                    const r = rotP(p, (it.rot || 0) * D2R);
+                    return S({ x: r.x + it.x, y: r.y + it.y });
+                  };
+                  const A = at(a),
+                    B = at(b);
+                  return (
+                    <line
+                      key={i}
+                      x1={A.x}
+                      y1={A.y}
+                      x2={B.x}
+                      y2={B.y}
+                      stroke={isSel ? C.accent : bad ? C.bad : shade(gc, 0.55)}
+                      strokeWidth={3.5}
+                      strokeLinecap="round"
+                    />
+                  );
+                })}
                 {isSel &&
                   (() => {
                     const hp = S(handleWorld(it, def));
