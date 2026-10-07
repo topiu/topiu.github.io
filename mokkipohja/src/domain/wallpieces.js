@@ -11,9 +11,11 @@ import { DEF_WALL_H, openHead, openSill } from "./openings";
    hands its doors and windows in the covered part to the wall covering it.
 
    A piece: { id, wall, room, x1, y1, x2, y2, L, ux, uy, t, ops, shared },
-   with ops its openings as { a, b, sill, head, kind, flip, side } in mm
-   along the piece, sorted, clamped to it and not overlapping. flip and side
-   are a door's hinge end and swing side, as on the opening. shared lists the
+   with ops its openings as { a, b, sill, head, kind, flip, side, through }
+   in mm along the piece, sorted, clamped to it and not overlapping. flip and
+   side are a door's hinge end and swing side, as on the opening; through
+   marks a hole made for an opening in a wall lying against this one (see
+   lyingAgainst), which has no frame or leaf of its own. shared lists the
    other rooms whose walls it stands in for, as { room, lo, hi } (mm along
    the piece): there it must also reach up to their roofs. */
 
@@ -96,7 +98,60 @@ export function wallPieces(doc) {
     }
   }
   for (const p of pieces) p.ops = tidyOpenings(p.ops, p.L);
+  // an opening also goes through any wall lying against its own, as a plain
+  // hole a millimetre larger all round (its sides then never sit in the same
+  // plane as the opening's own, to flicker through each other)
+  for (const p of pieces)
+    for (const op of p.ops.filter((o) => !o.through))
+      for (const q of pieces) {
+        if (q === p) continue;
+        const k = lyingAgainst(p, q);
+        if (!k) continue;
+        const a = Math.max(op.a, k.lo),
+          b = Math.min(op.b, k.hi);
+        if (b - a < 50) continue;
+        const ta = (a - k.pa) * k.dir,
+          tb = (b - k.pa) * k.dir;
+        q.ops.push({
+          ...op,
+          a: Math.min(ta, tb) - 1,
+          b: Math.max(ta, tb) + 1,
+          sill: Math.max(0, op.sill - 1),
+          head: op.head + 1,
+          through: true,
+        });
+      }
+  for (const p of pieces) p.ops = tidyOpenings(p.ops, p.L);
   return pieces;
+}
+
+/* How wall b lies against wall a: parallel, and so close that their
+   thicknesses overlap or almost touch, as the walls of two rooms along the
+   edge they share, side by side. A door in one is a door in both: the plan,
+   the 3D view and walking all treat it so, and nobody has to delete a room's
+   wall to put a door through. Returns { d, t, lo, hi, pa, dir }: b's
+   centreline d mm off a's along a's n, b's thickness, the stretch [lo, hi]
+   of a (mm from its start) b runs along, where b starts along a, and whether
+   b runs the same way (1) or back (-1). Null if b does not lie against a. */
+export function lyingAgainst(a, b, tol = 30) {
+  const La = Math.hypot(a.x2 - a.x1, a.y2 - a.y1),
+    Lb = Math.hypot(b.x2 - b.x1, b.y2 - b.y1);
+  if (La < 1 || Lb < 1) return null;
+  const ux = (a.x2 - a.x1) / La,
+    uy = (a.y2 - a.y1) / La;
+  const vx = (b.x2 - b.x1) / Lb,
+    vy = (b.y2 - b.y1) / Lb;
+  if (Math.abs(ux * vy - uy * vx) > SAME_DIR) return null;
+  const ta = a.t || 150,
+    tb = b.t || 150;
+  const d = (b.x1 - a.x1) * -uy + (b.y1 - a.y1) * ux;
+  if (Math.abs(d) > (ta + tb) / 2 + tol) return null;
+  const pa = (b.x1 - a.x1) * ux + (b.y1 - a.y1) * uy,
+    pb = (b.x2 - a.x1) * ux + (b.y2 - a.y1) * uy;
+  const lo = Math.max(0, Math.min(pa, pb)),
+    hi = Math.min(La, Math.max(pa, pb));
+  if (hi - lo < 1) return null;
+  return { d, t: tb, lo, hi, pa, dir: pb > pa ? 1 : -1 };
 }
 
 /* an interval minus a set of intervals */
@@ -127,6 +182,7 @@ function tidyOpenings(ops, L) {
       prev.sill = Math.min(prev.sill, op.sill);
       prev.head = Math.max(prev.head, op.head);
       if (op.kind === "door") prev.kind = "door";
+      prev.through = !!(prev.through && op.through); // a real opening keeps its joinery
     } else out.push({ ...op });
   }
   return out;

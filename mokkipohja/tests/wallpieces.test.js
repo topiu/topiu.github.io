@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { blockingSegments } from "../src/domain/walk";
 import {
+  lyingAgainst,
   pieceEnds,
   ridgeOf,
   roofHeightAt,
@@ -234,6 +235,68 @@ describe("a smaller room built against a bigger one", () => {
       expect(top({ x: 5000, y: end + 5e-13 })).toBe(2600); // a corner found by interpolating
       expect(top({ x: 5000, y: end + 5 })).toBe(2200);
       expect(topBreaks(p, d)).toEqual(expect.arrayContaining([end, end + 1]));
+    }
+  });
+});
+
+describe("doors between rooms with a wall each", () => {
+  // a hall's centred wall and the bedroom's own wall outside its edge, side
+  // by side along the edge the two rooms share, their thicknesses overlapping
+  const hallWall = W("H", 0, 4100, 1920, 4100, { t: 95 });
+  const bedWall = W("B", 1905, 4155, 0, 4155, { t: 95 });
+  const door = { id: "d", wallId: "H", off: 500, w: 800, kind: "door", side: -1 };
+
+  it("knows which walls lie against each other", () => {
+    const k = lyingAgainst(hallWall, bedWall);
+    expect(k.d).toBeCloseTo(55);
+    expect(k.lo).toBe(0);
+    expect(k.hi).toBe(1905);
+    expect(k.dir).toBe(-1);
+    expect(lyingAgainst(hallWall, W("C", 0, 4400, 1920, 4400, { t: 95 }))).toBe(null); // a gap between
+    expect(lyingAgainst(hallWall, W("D", 0, 4100, 0, 6000))).toBe(null); // across, not along
+  });
+
+  it("puts a door in one through the other as a plain hole", () => {
+    const ps = wallPieces(plan({ walls: [hallWall, bedWall], openings: [door] }));
+    const [h, b] = ps;
+    expect(h.ops).toHaveLength(1);
+    expect(h.ops[0].through).toBeFalsy(); // the door itself, with its frame and leaf
+    expect(b.ops).toHaveLength(1);
+    expect(b.ops[0].through).toBe(true);
+    // the same stretch, measured along the bedroom wall, a millimetre wider each side
+    expect(b.ops[0].a).toBeCloseTo(1905 - 1300 - 1);
+    expect(b.ops[0].b).toBeCloseTo(1905 - 500 + 1);
+  });
+
+  it("lets the walker through both walls", () => {
+    const segs = blockingSegments(plan({ walls: [hallWall, bedWall], openings: [door] }));
+    expect(segs).toHaveLength(4); // each wall split by the doorway
+    const blocking = segs.filter((s) => Math.min(s.x1, s.x2) < 900 && Math.max(s.x1, s.x2) > 900);
+    expect(blocking).toHaveLength(0);
+  });
+
+  it("does the same for rooms with walls inside them, back to back", () => {
+    const a = W("A", 0, 2925, 4000, 2925, { t: 150 }),
+      b = W("B", 4000, 3075, 0, 3075, { t: 150 });
+    const ps = wallPieces(
+      plan({
+        walls: [a, b],
+        openings: [{ id: "w", wallId: "B", off: 1000, w: 1200, kind: "window" }],
+      }),
+    );
+    expect(ps[0].ops.map((o) => [o.kind, !!o.through])).toEqual([["window", true]]);
+  });
+
+  it("keeps one opening where both rooms put a door in their wall", () => {
+    const ps = wallPieces(
+      plan({
+        walls: [hallWall, bedWall],
+        openings: [door, { id: "e", wallId: "B", off: 1905 - 1300, w: 800, kind: "door", side: 1 }],
+      }),
+    );
+    for (const p of ps) {
+      expect(p.ops).toHaveLength(1);
+      expect(p.ops[0].through).toBe(false); // each wall keeps its own door
     }
   });
 });
