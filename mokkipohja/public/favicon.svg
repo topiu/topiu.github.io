@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Source of the PNG icons (apple-touch-icon, icon-192/512, maskable),
+       which are rendered full-bleed because iOS and Android round their own. -->
+  <rect width="32" height="32" rx="6" fill="#1B2528"/>
+  <g id="house">
+    <path d="M6 26V14L16 6l10 8v12z" fill="none" stroke="#E9E7DC" stroke-width="2.2" stroke-linejoin="round"/>
+    <path d="M13 26v-7h6v7" fill="none" stroke="#66CDD3" stroke-width="2"/>
+  </g>
+</svg>

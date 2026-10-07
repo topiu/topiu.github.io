@@ -1,0 +1,16 @@
+{
+  "name": "Mökkipohja",
+  "short_name": "Mökkipohja",
+  "description": "Mökin pohjapiirros ja kalusteiden sijoittelu, myös 3D-näkymänä.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1B2528",
+  "theme_color": "#1B2528",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
