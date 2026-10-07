@@ -23,9 +23,11 @@ export function ceilingAt(room, p) {
     const t = clamp((v - a0) / span, 0, 1);
     return c.eaveH + (c.ridgeH - c.eaveH) * t;
   }
+  /* each slope runs from its own eave up to the ridge, so both eaves sit at
+     eaveH wherever the ridge is; one shared slope lifted the nearer eave */
   const rp = a0 + span * (c.ridge ?? 0.5);
-  const half = Math.max(rp - a0, a1 - rp, 1);
-  return Math.max(0, c.ridgeH - (c.ridgeH - c.eaveH) * (Math.abs(v - rp) / half));
+  const run = Math.max(v < rp ? rp - a0 : a1 - rp, 1);
+  return Math.max(0, c.ridgeH - (c.ridgeH - c.eaveH) * (Math.abs(v - rp) / run));
 }
 /* axis positions where the ceiling crosses a given height */
 export function ceilingCrossings(room, T) {
@@ -42,10 +44,9 @@ export function ceilingCrossings(room, T) {
     return t > 0.02 && t < 0.98 ? [a0 + span * t] : [];
   }
   const rp = a0 + span * (c.ridge ?? 0.5);
-  const half = Math.max(rp - a0, a1 - rp, 1);
-  const d = (half * (c.ridgeH - T)) / rise;
-  if (d <= 0 || d >= half) return [];
-  return [rp - d, rp + d].filter((v) => v > a0 + 20 && v < a1 - 20);
+  const k = (c.ridgeH - T) / rise; // 0 at the ridge, 1 at the eaves, on either slope
+  if (k <= 0 || k >= 1) return [];
+  return [rp - (rp - a0) * k, rp + (a1 - rp) * k].filter((v) => v > a0 + 20 && v < a1 - 20);
 }
 export function roomAt(doc, p) {
   for (let i = doc.rooms.length - 1; i >= 0; i--)

@@ -11,7 +11,7 @@ import { Btn, Label, NumField } from "./atoms";
 export function ShapeEditor({ initial, onSave, onCancel, t, lang }) {
   const [tab, setTab] = useState(initial?.type || "rect");
   const [name, setName] = useState(initial ? nameOf(initial, lang) : "");
-  const [hz, setHz] = useState(initial?.hz || 800);
+  const [hz, setHz] = useState(initial?.hz ?? 800);
   const [w, setW] = useState(initial?.w || 1000);
   const [h, setH] = useState(initial?.h || 600);
   const [d, setD] = useState(initial ? (initial.r || 300) * 2 : 600);

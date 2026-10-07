@@ -147,7 +147,8 @@ export const withAutoWalls = (doc, roomId) => {
   return r && r.autoWalls ? rebuildRoomWalls(doc, r) : doc;
 };
 
-const autoWallsOn = (room) => !!(room.autoWalls && room.autoWalls.mode && room.autoWalls.mode !== "none");
+const autoWallsOn = (room) =>
+  !!(room.autoWalls && room.autoWalls.mode && room.autoWalls.mode !== "none");
 
 /* Add a corner at point m on edge i, as corner i + 1.
    Room walls follow their edges by index, so every later wall moves up one
@@ -232,19 +233,24 @@ export function snapRoomVertex(p, pts, i, doc, grid, tol) {
   const A = pts[(i - 1 + n) % n],
     B = pts[(i + 1) % n];
 
-  // 1. existing corners and wall ends snap exactly
+  // 1. existing corners and wall ends snap exactly, except the room's own
+  //    walls: they sit on (or just off) the corner being dragged, so the
+  //    corner used to stick to its old place, or jitter towards its own
+  //    inside or outside wall end
+  const self = doc.rooms.find((r) => r.points === pts);
   const verts = [];
   for (const w of doc.walls)
-    verts.push(
-      {
-        x: w.x1,
-        y: w.y1,
-      },
-      {
-        x: w.x2,
-        y: w.y2,
-      },
-    );
+    if (!(self && w.room === self.id))
+      verts.push(
+        {
+          x: w.x1,
+          y: w.y1,
+        },
+        {
+          x: w.x2,
+          y: w.y2,
+        },
+      );
   for (const r of doc.rooms)
     r.points.forEach((v, k) => {
       if (!(r.points === pts && k === i)) verts.push(v);

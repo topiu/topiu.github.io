@@ -89,3 +89,28 @@ keyed per import and only pruned when no history can need them.
 **There is a root error boundary** (`ui/ErrorBoundary.jsx`), plus one around
 the 3D and section views. The fallback can still reload and save a backup.
 Treat it as a floor: a throwing render path still needs fixing and a test.
+
+**Number fields commit when you are done.** `NumField` keeps its own text while
+you type and commits on blur, Enter, or when it is removed mid-edit. Committing
+each keystroke let parents clamp half-typed numbers, and turned "6" on the way
+to "6000" into a real wall 6 mm long.
+
+**React wheel listeners are passive.** `preventDefault` in `onWheel` does
+nothing, so the plan's wheel handler is a native `{ passive: false }` listener.
+React registers `touchmove` passively too.
+
+**A press only drags once it is past `DRAG_SLOP`** (6 px). Before that a tap to
+select moved things by the finger's wobble. Undo records exactly the drags
+that went live (`g.live`).
+
+**A dragged corner never snaps to its own room's walls.** Those walls sit on,
+or just off, the corner itself.
+
+**Each gable slope runs from its own eave.** With the ridge off centre, one
+shared slope lifted the nearer eave above the eaves height. `ceilingAt` and
+`ceilingCrossings` must agree.
+
+**The sheet image is the whole page.** The PDF writer places it at full page
+size. Any extra margin rescales a sheet whose title block states a scale.
+
+**Use `??`, not `||`, for numbers that can be 0** (heights, offsets).

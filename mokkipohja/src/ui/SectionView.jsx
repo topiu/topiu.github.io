@@ -107,7 +107,7 @@ export function SectionView({ doc, defs, lang, room, atPos, height, t }) {
         def,
         a: axis === "x" ? ib.x0 : ib.y0,
         b: axis === "x" ? ib.x1 : ib.y1,
-        hz: def.hz || 800,
+        hz: def.hz ?? 800,
       };
     })
     .filter(Boolean);

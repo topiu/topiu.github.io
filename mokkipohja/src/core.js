@@ -27,6 +27,7 @@ export const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, m
 export const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif';
 export const D2R = Math.PI / 180;
 export const TAP_SLOP = 12; // px a finger may drift and still count as a tap
+export const DRAG_SLOP = 6; // px a press may wobble before it drags what it grabbed
 export const uid = () => Math.random().toString(36).slice(2, 10);
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 export const fmt = (mm) =>
