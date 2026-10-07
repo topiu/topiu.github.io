@@ -1,4 +1,3 @@
-
 /* ---------------- minimal single-image PDF writer ---------------- */
 
 export function b64ToBytes(b64) {
@@ -24,8 +23,10 @@ export function buildPdf(jpegBytes, imgW, imgH, pageWmm, pageHmm) {
   const endObj = () => put("\nendobj\n");
   const pw = (pageWmm * 72) / 25.4,
     ph = (pageHmm * 72) / 25.4;
-  const mg = (10 * 72) / 25.4;
-  const fit = Math.min((pw - mg * 2) / imgW, (ph - mg * 2) / imgH);
+  /* The sheet image is already the whole page, margins and frame included.
+     Fitting it inside another 10 mm margin printed it at 90.5% (a 1:50 sheet
+     came out at 1:55), so it fills the page. */
+  const fit = Math.min(pw / imgW, ph / imgH);
   const dw = imgW * fit,
     dh = imgH * fit;
   const dx = (pw - dw) / 2,
