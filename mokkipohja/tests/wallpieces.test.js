@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { offsetEdges, roomEdgeShares } from "../src/domain/rooms";
 import { blockingSegments } from "../src/domain/walk";
-import { pieceEnds, ridgeOf, roofHeightAt, wallPieces, wallTop } from "../src/domain/wallpieces";
+import {
+  groupCentres,
+  lyingAgainst,
+  pieceEnds,
+  ridgeOf,
+  roofHeightAt,
+  topBreaks,
+  wallPieces,
+  wallTop,
+} from "../src/domain/wallpieces";
 
 const W = (id, x1, y1, x2, y2, extra = {}) => ({ id, x1, y1, x2, y2, t: 150, ...extra });
 const plan = (extra) => ({ walls: [], rooms: [], openings: [], items: [], ...extra });
@@ -52,6 +60,25 @@ describe("walls on the same line", () => {
       ],
     });
     expect(wallPieces(d)[0].ops.map((o) => [o.a, o.b])).toEqual([[1000, 2000]]);
+  });
+
+  it("cuts a window that runs into a door back to the door, not into one big hole", () => {
+    const d = plan({
+      walls: [W("A", 0, 0, 9000, 0)],
+      openings: [
+        { id: "d", wallId: "A", off: 3000, w: 800, kind: "door" },
+        { id: "w", wallId: "A", off: 3600, w: 1800, kind: "window" }, // 200 into the door
+        { id: "v", wallId: "A", off: 6000, w: 2400, kind: "window" },
+        { id: "e", wallId: "A", off: 7000, w: 800, kind: "door" }, // in the middle of that one
+      ],
+    });
+    expect(wallPieces(d)[0].ops.map((o) => [o.kind, o.a, o.b, o.sill])).toEqual([
+      ["door", 3000, 3800, 0],
+      ["window", 3800, 5400, 900],
+      ["window", 6000, 7000, 900],
+      ["door", 7000, 7800, 0],
+      ["window", 7800, 8400, 900],
+    ]);
   });
 
   it("lets the walker through a door put in either of two coincident walls", () => {
@@ -177,67 +204,6 @@ describe("roof heights", () => {
   });
 });
 
-describe("rooms next to each other", () => {
-  const rect = (id, x0, y0, x1, y1) => ({
-    id,
-    points: [
-      { x: x0, y: y0 },
-      { x: x1, y: y0 },
-      { x: x1, y: y1 },
-      { x: x0, y: y1 },
-    ],
-  });
-
-  it("finds the edge two rooms share, and only that one", () => {
-    const g = roomEdgeShares(
-      plan({ rooms: [rect("A", 0, 0, 4000, 3000), rect("B", 4000, 0, 7000, 3000)] }),
-    );
-    expect(g.get("A")).toEqual([[], [{ a: 0, b: 3000, gap: 0 }], [], []]);
-    expect(g.get("B")).toEqual([[], [], [], [{ a: 0, b: 3000, gap: 0 }]]);
-  });
-
-  it("finds the part of a long side a smaller room is built against", () => {
-    const g = roomEdgeShares(
-      plan({ rooms: [rect("A", 0, 0, 5000, 6000), rect("B", 5000, 0, 8000, 4000)] }),
-    );
-    expect(g.get("A")[1]).toEqual([{ a: 0, b: 4000, gap: 0 }]);
-  });
-
-  it("measures the gap between rooms drawn a wall's width apart", () => {
-    const g = roomEdgeShares(
-      plan({ rooms: [rect("A", 0, 0, 4000, 3000), rect("B", 4150, 1000, 6000, 4000)] }),
-    );
-    expect(g.get("A")[1]).toEqual([{ a: 1000, b: 3000, gap: 150 }]);
-    expect(g.get("B")[3]).toEqual([{ a: 1000, b: 3000, gap: 150 }]);
-  });
-
-  it("ignores a room beyond a corridor", () => {
-    const g = roomEdgeShares(
-      plan({ rooms: [rect("A", 0, 0, 4000, 3000), rect("B", 5200, 0, 7000, 3000)] }),
-    );
-    expect(g.get("A")).toEqual([[], [], [], []]);
-  });
-
-  it("steps an outline square where an edge's offset changes part-way", () => {
-    const pts = [
-      { x: 0, y: 0 },
-      { x: 4000, y: 0 },
-      { x: 4000, y: 2000 }, // the right side, in two parts
-      { x: 4000, y: 3000 },
-      { x: 0, y: 3000 },
-    ];
-    const out = offsetEdges(pts, [500, 0, 500, 500, 500]);
-    expect(out.map((p) => [Math.round(p.x), Math.round(p.y)])).toEqual([
-      [-500, -500],
-      [4000, -500],
-      [4000, 2000],
-      [4500, 2000],
-      [4500, 3500],
-      [-500, 3500],
-    ]);
-  });
-});
-
 describe("a smaller room built against a bigger one", () => {
   const A = {
     id: "A",
@@ -272,5 +238,105 @@ describe("a smaller room built against a bigger one", () => {
     const top = wallTop(ps[0], d);
     expect(top({ x: 5000, y: 2000 })).toBe(2600); // up to the sauna's ceiling
     expect(top({ x: 5000, y: 5000 })).toBe(2200); // past it, the room's own
+  });
+
+  it("rises to the higher roof as far as that room's walls reach past the shared stretch", () => {
+    // the sauna's front wall stands on, astride or outside its edge; its
+    // roof, and so the shared wall, reach on to the wall's outer face
+    for (const [mode, end] of [
+      ["inside", 4000],
+      ["centre", 4075],
+      ["outside", 4150],
+    ]) {
+      const d = plan({ rooms: [A, { ...B, autoWalls: { mode, t: 150 } }], walls });
+      const [p] = wallPieces(d);
+      const top = wallTop(p, d);
+      expect(top({ x: 5000, y: end - 5 })).toBe(2600);
+      expect(top({ x: 5000, y: end + 5e-13 })).toBe(2600); // a corner found by interpolating
+      expect(top({ x: 5000, y: end + 5 })).toBe(2200);
+      expect(topBreaks(p, d)).toEqual(expect.arrayContaining([end, end + 1]));
+    }
+  });
+});
+
+describe("doors between rooms with a wall each", () => {
+  // a hall's centred wall and the bedroom's own wall outside its edge, side
+  // by side along the edge the two rooms share, their thicknesses overlapping
+  const hallWall = W("H", 0, 4100, 1920, 4100, { t: 95 });
+  const bedWall = W("B", 1905, 4155, 0, 4155, { t: 95 });
+  const door = { id: "d", wallId: "H", off: 500, w: 800, kind: "door", side: -1 };
+
+  it("knows which walls lie against each other", () => {
+    const k = lyingAgainst(hallWall, bedWall);
+    expect(k.d).toBeCloseTo(55);
+    expect(k.lo).toBe(0);
+    expect(k.hi).toBe(1905);
+    expect(k.dir).toBe(-1);
+    expect(lyingAgainst(hallWall, W("C", 0, 4400, 1920, 4400, { t: 95 }))).toBe(null); // a gap between
+    expect(lyingAgainst(hallWall, W("D", 0, 4100, 0, 6000))).toBe(null); // across, not along
+  });
+
+  it("puts a door in one through the other as a plain hole", () => {
+    const ps = wallPieces(plan({ walls: [hallWall, bedWall], openings: [door] }));
+    const [h, b] = ps;
+    expect(h.ops).toHaveLength(1);
+    expect(h.ops[0].through).toBeFalsy(); // the door itself, with its frame and leaf
+    expect(b.ops).toHaveLength(1);
+    expect(b.ops[0].through).toBe(true);
+    // the same stretch, measured along the bedroom wall, a millimetre wider each side
+    expect(b.ops[0].a).toBeCloseTo(1905 - 1300 - 1);
+    expect(b.ops[0].b).toBeCloseTo(1905 - 500 + 1);
+  });
+
+  it("lets the walker through both walls", () => {
+    const segs = blockingSegments(plan({ walls: [hallWall, bedWall], openings: [door] }));
+    expect(segs).toHaveLength(4); // each wall split by the doorway
+    const blocking = segs.filter((s) => Math.min(s.x1, s.x2) < 900 && Math.max(s.x1, s.x2) > 900);
+    expect(blocking).toHaveLength(0);
+  });
+
+  it("does the same for rooms with walls inside them, back to back", () => {
+    const a = W("A", 0, 2925, 4000, 2925, { t: 150 }),
+      b = W("B", 4000, 3075, 0, 3075, { t: 150 });
+    const ps = wallPieces(
+      plan({
+        walls: [a, b],
+        openings: [{ id: "w", wallId: "B", off: 1000, w: 1200, kind: "window" }],
+      }),
+    );
+    expect(ps[0].ops.map((o) => [o.kind, !!o.through])).toEqual([["window", true]]);
+  });
+
+  it("keeps one opening where both rooms put a door in their wall", () => {
+    const ps = wallPieces(
+      plan({
+        walls: [hallWall, bedWall],
+        openings: [door, { id: "e", wallId: "B", off: 1905 - 1300, w: 800, kind: "door", side: 1 }],
+      }),
+    );
+    for (const p of ps) {
+      expect(p.ops).toHaveLength(1);
+      expect(p.ops[0].through).toBe(false); // each wall keeps its own door
+    }
+  });
+});
+
+describe("buildings drawn with free walls", () => {
+  it("finds the middle of each building, not of the whole plan", () => {
+    const box = (id, x0, y0, x1, y1) => [
+      W(id + 0, x0, y0, x1, y0),
+      W(id + 1, x1, y0, x1, y1),
+      W(id + 2, x1, y1, x0, y1),
+      W(id + 3, x0, y1, x0, y0),
+    ];
+    const walls = [
+      ...box("a", 0, 0, 4000, 3000),
+      ...box("b", 10000, 0, 13000, 9000),
+      W("p", 10004, 5000, 11400, 5000),
+    ];
+    const c = groupCentres(wallPieces(plan({ walls })));
+    expect(c[0]).toEqual({ x: 2000, y: 1500 });
+    expect(c[4]).toEqual({ x: 11500, y: 4500 });
+    expect(c[8]).toEqual({ x: 11500, y: 4500 }); // the partition belongs to its building
   });
 });

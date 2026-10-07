@@ -10,8 +10,11 @@ import {
   triangulate,
   wallPoly,
 } from "../domain/geometry";
-import { offsetEdges, polySigned, roomEdgeShares } from "../domain/rooms";
+import { polySigned } from "../domain/rooms";
+import { ROOF_BUILDUP, onRoof, planRoofs } from "../domain/roofs";
+import { faceParts } from "../domain/wallfaces";
 import {
+  groupCentres,
   pieceEnds,
   ridgeOf,
   roofHeightAt,
@@ -27,8 +30,6 @@ import { Parts, furnitureModel } from "./furniture";
    it), as plain three.js objects the stage shows, hides and lights. */
 
 const MM = 0.001;
-const ROOF_BUILDUP = 220; // mm from the ceiling to the top of the roof
-const EAVES = 450; // mm a roof overhangs an outside wall's face
 const SLAB = 120; // mm: what stays of a wall cut away to look inside
 
 export function buildCabin(doc, defs, mats) {
@@ -40,21 +41,20 @@ export function buildCabin(doc, defs, mats) {
   const furniture = new THREE.Group();
   group.add(floors, walls, slabs, roof, furniture);
   const rooms = doc.rooms.filter((r) => r.points && r.points.length > 2);
-  const centre = planCentre(doc, defs);
 
   rooms.forEach((r, i) => floors.add(floorMesh(r, i, mats)));
 
   const pieces = wallPieces(doc);
   const ends = pieceEnds(pieces);
+  const centres = groupCentres(pieces);
   const wallInfo = pieces.map((p, i) => {
-    const w = buildWall(p, ends[i], doc, rooms, mats, centre);
+    const w = buildWall(p, ends[i], doc, rooms, mats, centres[i]);
     walls.add(w.obj);
     slabs.add(w.slab);
     return w;
   });
 
-  const shares = roomEdgeShares(doc);
-  rooms.forEach((r, i) => roof.add(buildRoof(r, shares.get(r.id), i, mats)));
+  for (const m of roofMeshes(doc, mats)) roof.add(m);
 
   const shadowQuad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   for (const it of doc.items) {
@@ -216,7 +216,8 @@ function buildWall(piece, e, doc, rooms, mats, centre) {
     .map(ridgeOf)
     .filter(Boolean);
 
-  // which faces look out: probe a little way off each face's middle
+  // which side looks out, for the joinery and for cutting the wall away:
+  // probe a little way off each face's middle (faceParts dresses the faces)
   const inside = (p) => rooms.some((r) => pointInPoly(p, r.points));
   const ext = { 1: !inside(P(L / 2, t2 + 300)), [-1]: !inside(P(L / 2, -t2 - 300)) };
 
@@ -267,22 +268,26 @@ function buildWall(piece, e, doc, rooms, mats, centre) {
         new THREE.Vector2(o.b, o.h),
         new THREE.Vector2(o.a, o.h),
       ]);
-    const tris = THREE.ShapeUtils.triangulateShape(contour, holes);
-    const all = [...contour, ...holes.flat()];
     const n = [s * nx, 0, s * ny];
-    const mi = ext[s] ? 1 : 0;
-    for (const [i, j, k] of tris) {
-      const [a, b, c] = [all[i], all[j], all[k]];
-      M.tri(
-        mi,
-        V(a.x, w, a.y),
-        V(b.x, w, b.y),
-        V(c.x, w, c.y),
-        n,
-        [a.x * MM, a.y * MM],
-        [b.x * MM, b.y * MM],
-        [c.x * MM, c.y * MM],
-      );
+    // dressed as inside wall where it faces a room, below that room's ceiling
+    for (const part of faceParts(piece, doc, s, contour, holes)) {
+      const outer = part.outer.map((p) => new THREE.Vector2(p.x, p.y));
+      const hs = part.holes.map((h) => h.map((p) => new THREE.Vector2(p.x, p.y)));
+      const tris = THREE.ShapeUtils.triangulateShape(outer, hs);
+      const all = [...outer, ...hs.flat()];
+      for (const [i, j, k] of tris) {
+        const [a, b, c] = [all[i], all[j], all[k]];
+        M.tri(
+          part.indoor ? 0 : 1,
+          V(a.x, w, a.y),
+          V(b.x, w, b.y),
+          V(c.x, w, c.y),
+          n,
+          [a.x * MM, a.y * MM],
+          [b.x * MM, b.y * MM],
+          [c.x * MM, c.y * MM],
+        );
+      }
     }
   }
 
@@ -299,7 +304,11 @@ function buildWall(piece, e, doc, rooms, mats, centre) {
     ]),
   ];
   const local = (q) => P(q.x, q.y);
+  const across = (p) => (p.x - piece.x1) * nx + (p.y - piece.y1) * ny;
   for (let i = 0; i < cuts.length - 1; i++) {
+    // a step down where the wall stops standing in for a higher room's: it
+    // stands above the lower roof, out of doors, so it is dressed as outside
+    const step = cuts[i + 1] - cuts[i] < 2 && Math.abs(H(cuts[i], 0) - H(cuts[i + 1], 0)) > 20;
     let halves = [clipHalf(clipHalf(quad, "x", cuts[i], false), "x", cuts[i + 1], true).map(local)];
     for (const r of ridges)
       halves = halves.flatMap((h) => [
@@ -309,7 +318,9 @@ function buildWall(piece, e, doc, rooms, mats, centre) {
     for (const h of halves) {
       if (h.length < 3) continue;
       const pts = h.map((p) => v3(p, top(p)));
-      for (let k = 1; k < pts.length - 1; k++) M.sloped(2, pts[0], pts[k], pts[k + 1], true);
+      const uvs = step ? h.map((p) => [across(p) * MM, top(p) * MM]) : [];
+      for (let k = 1; k < pts.length - 1; k++)
+        M.sloped(step ? 1 : 2, pts[0], pts[k], pts[k + 1], true, uvs[0], uvs[k], uvs[k + 1]);
     }
   }
 
@@ -357,7 +368,7 @@ function buildWall(piece, e, doc, rooms, mats, centre) {
     .setPosition(piece.x1 * MM, 0, piece.y1 * MM);
   const J = new Parts();
   const extSide = ext[1] && !ext[-1] ? 1 : ext[-1] && !ext[1] ? -1 : 0;
-  for (const o of ops) joinery(J, frame, o, t2, extSide, e, H, mats);
+  for (const o of ops) if (!o.through) joinery(J, frame, o, t2, extSide, e, H, mats);
   for (const m of J.meshes()) frame.add(m);
   obj.add(frame);
 
@@ -525,111 +536,64 @@ function joinery(J, frame, o, t2mm, extSide, e, H, mats) {
 
 /* ---------- roofs ---------- */
 
-/* A room's roof: its ceiling's shape carried out over the walls, as a slab
-   with tin on top and boards underneath, a white fascia round its edge and
-   a cap along a gable's ridge. Outside edges overhang the wall face; where
-   an edge runs along another room, the roof reaches halfway to that room's
-   roof instead, and the eaves step back square where the other room ends. */
-function buildRoof(room, shares, idx, mats) {
-  const c = room.ceiling || defaultCeiling();
-  const aw = room.autoWalls || {};
-  const t = aw.t || 150;
-  const face = aw.mode === "outside" ? t : aw.mode === "centre" ? t / 2 : 0;
-  const pts = [],
-    dists = [];
-  room.points.forEach((p, i) => {
-    const q = room.points[(i + 1) % room.points.length];
-    const L = Math.hypot(q.x - p.x, q.y - p.y);
-    if (L < 1) return;
-    const spans = (shares && shares[i]) || [];
-    const marks = [
-      ...new Set([0, ...spans.flatMap((sp) => [sp.a, sp.b]), L].map((v) => Math.round(v))),
-    ]
-      .filter((v) => v >= 0 && v <= L)
-      .sort((a, b) => a - b);
-    for (let k = 0; k < marks.length - 1; k++) {
-      if (marks[k + 1] - marks[k] < 1) continue;
-      const mid = (marks[k] + marks[k + 1]) / 2;
-      const sp = spans.find((x) => mid > x.a && mid < x.b);
-      pts.push({ x: p.x + ((q.x - p.x) * marks[k]) / L, y: p.y + ((q.y - p.y) * marks[k]) / L });
-      dists.push(sp ? sp.gap / 2 : face + EAVES);
-    }
-  });
-  if (pts.length < 3) return new THREE.Group();
-  const outline = offsetEdges(pts, dists);
-  const ridge = ridgeOf(room);
-  const parts = ridge
-    ? [
-        clipHalf(outline, ridge.axis, ridge.value, true),
-        clipHalf(outline, ridge.axis, ridge.value, false),
-      ]
-    : [outline];
-  const lift = idx * 3; // mm: keeps roofs that meet from fighting where they touch
-  const low = (p) => roofHeightAt(room, p) + lift;
-  // u along the ridge, v down the slope, so the tin's seams run downhill
-  const uv = (p) => (c.axis === "x" ? [p.y * MM, p.x * MM] : [p.x * MM, p.y * MM]);
-  const M = new Mesher(3); // 0 tin, 1 ceiling boards, 2 fascia
-  const onRidge = (p) => ridge && Math.abs((ridge.axis === "x" ? p.x : p.y) - ridge.value) < 0.5;
-  for (const poly of parts) {
-    if (poly.length < 3) continue;
-    for (const [a, b, d] of triangulate(poly)) {
-      const [pa, pb, pd] = [poly[a], poly[b], poly[d]];
-      M.sloped(
-        0,
-        v3(pa, low(pa) + ROOF_BUILDUP),
-        v3(pb, low(pb) + ROOF_BUILDUP),
-        v3(pd, low(pd) + ROOF_BUILDUP),
-        true,
-        uv(pa),
-        uv(pb),
-        uv(pd),
-      );
-      M.sloped(1, v3(pa, low(pa)), v3(pb, low(pb)), v3(pd, low(pd)), false, uv(pa), uv(pb), uv(pd));
-    }
-    const s = polySigned(poly) > 0 ? 1 : -1;
-    for (let i = 0; i < poly.length; i++) {
-      const p = poly[i],
-        q = poly[(i + 1) % poly.length];
-      if (onRidge(p) && onRidge(q)) continue;
-      const L = Math.hypot(q.x - p.x, q.y - p.y);
-      if (L < 0.5) continue;
-      const n = [((q.y - p.y) / L) * s, 0, (-(q.x - p.x) / L) * s];
-      M.fan(
-        2,
-        [v3(p, low(p)), v3(q, low(q)), v3(q, low(q) + ROOF_BUILDUP), v3(p, low(p) + ROOF_BUILDUP)],
-        n,
-      );
-    }
-  }
-  const g = new THREE.Group();
-  const mesh = new THREE.Mesh(M.geometry(), [mats.roof, mats.ceiling, mats.trim]);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  g.add(mesh);
-  if (ridge) {
-    const along = outline.map((p) => (ridge.axis === "x" ? p.y : p.x));
-    const a0 = Math.min(...along),
-      a1 = Math.max(...along);
-    const y = (c.ridgeH + lift + ROOF_BUILDUP) * MM;
-    const r = ridge.value * MM;
+/* The roofs domain/roofs.js plans: each piece a slab with tin on top and
+   boards underneath (the ceiling inside), a white fascia round its edges,
+   holes included, though not along a gable's ridge where its halves meet;
+   and a cap along each ridge. */
+function roofMeshes(doc, mats) {
+  const { roofs, caps } = planRoofs(doc);
+  const out = roofs.map((piece) => roofMesh(piece, mats));
+  for (const c of caps) {
+    const len = (c.to - c.from) * MM,
+      mid = ((c.from + c.to) / 2) * MM,
+      at = c.value * MM;
+    const y = (c.h + ROOF_BUILDUP) * MM + 0.02;
     const cap = new THREE.Mesh(
-      ridge.axis === "x"
-        ? new THREE.BoxGeometry(0.16, 0.07, (a1 - a0) * MM).translate(
-            r,
-            y + 0.02,
-            ((a0 + a1) / 2) * MM,
-          )
-        : new THREE.BoxGeometry((a1 - a0) * MM, 0.07, 0.16).translate(
-            ((a0 + a1) / 2) * MM,
-            y + 0.02,
-            r,
-          ),
+      c.axis === "x"
+        ? new THREE.BoxGeometry(0.16, 0.07, len).translate(at, y, mid)
+        : new THREE.BoxGeometry(len, 0.07, 0.16).translate(mid, y, at),
       mats.iron,
     );
     cap.castShadow = true;
-    g.add(cap);
+    out.push(cap);
   }
-  return g;
+  return out;
+}
+
+function roofMesh(piece, mats) {
+  const { outer, holes, height, axis, ridge } = piece;
+  // u along the ridge, v down the slope, so the tin's seams run downhill
+  const uv = (p) => (axis === "x" ? [p.y * MM, p.x * MM] : [p.x * MM, p.y * MM]);
+  const contour = outer.map((p) => new THREE.Vector2(p.x, p.y));
+  const hs = holes.map((h) => h.map((p) => new THREE.Vector2(p.x, p.y)));
+  const tris = THREE.ShapeUtils.triangulateShape(contour, hs);
+  const all = [...contour, ...hs.flat()].map((v) => ({ x: v.x, y: v.y }));
+  const M = new Mesher(3); // 0 tin, 1 ceiling boards, 2 fascia
+  const top = (p) => v3(p, height(p) + ROOF_BUILDUP),
+    under = (p) => v3(p, height(p));
+  for (const [a, b, d] of tris) {
+    const [pa, pb, pd] = [all[a], all[b], all[d]];
+    M.sloped(0, top(pa), top(pb), top(pd), true, uv(pa), uv(pb), uv(pd));
+    M.sloped(1, under(pa), under(pb), under(pd), false, uv(pa), uv(pb), uv(pd));
+  }
+  const onRidge = (p) => ridge && Math.abs((ridge.axis === "x" ? p.x : p.y) - ridge.value) < 0.5;
+  for (const ring of [outer, ...holes])
+    for (let i = 0; i < ring.length; i++) {
+      const p = ring[i],
+        q = ring[(i + 1) % ring.length];
+      if (onRidge(p) && onRidge(q)) continue;
+      const L = Math.hypot(q.x - p.x, q.y - p.y);
+      if (L < 0.5) continue;
+      // face away from the roof: if a step that way lands on the roof, turn round
+      let n = [(q.y - p.y) / L, 0, -(q.x - p.x) / L];
+      const probe = { x: (p.x + q.x) / 2 + n[0] * 2, y: (p.y + q.y) / 2 + n[2] * 2 };
+      if (onRoof(piece, probe)) n = n.map((v) => -v);
+      M.fan(2, [under(p), under(q), top(q), top(p)], n);
+    }
+  const mesh = new THREE.Mesh(M.geometry(), [mats.roof, mats.ceiling, mats.trim]);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
 }
 
 /* ---------- the rest ---------- */
@@ -654,13 +618,6 @@ function roomLights(rooms) {
       light.userData.on = light.intensity;
       return light;
     });
-}
-
-function planCentre(doc, defs) {
-  const pts = planPoints(doc, defs);
-  if (!pts.length) return { x: 0, y: 0 };
-  const b = bbox(pts);
-  return { x: b.cx, y: b.cy };
 }
 
 function planPoints(doc, defs) {

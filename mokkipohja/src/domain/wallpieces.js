@@ -1,5 +1,5 @@
 import { ceilingAt, defaultCeiling, roomAt } from "./ceilings";
-import { bbox } from "./geometry";
+import { bbox, distToSeg, segCross } from "./geometry";
 import { DEF_WALL_H, openHead, openSill } from "./openings";
 
 /* The walls as solid things, for the 3D view and for walking into them.
@@ -11,9 +11,11 @@ import { DEF_WALL_H, openHead, openSill } from "./openings";
    hands its doors and windows in the covered part to the wall covering it.
 
    A piece: { id, wall, room, x1, y1, x2, y2, L, ux, uy, t, ops, shared },
-   with ops its openings as { a, b, sill, head, kind, flip, side } in mm
-   along the piece, sorted, clamped to it and not overlapping. flip and side
-   are a door's hinge end and swing side, as on the opening. shared lists the
+   with ops its openings as { a, b, sill, head, kind, flip, side, through }
+   in mm along the piece, sorted, clamped to it and not overlapping. flip and
+   side are a door's hinge end and swing side, as on the opening; through
+   marks a hole made for an opening in a wall lying against this one (see
+   lyingAgainst), which has no frame or leaf of its own. shared lists the
    other rooms whose walls it stands in for, as { room, lo, hi } (mm along
    the piece): there it must also reach up to their roofs. */
 
@@ -96,7 +98,60 @@ export function wallPieces(doc) {
     }
   }
   for (const p of pieces) p.ops = tidyOpenings(p.ops, p.L);
+  // an opening also goes through any wall lying against its own, as a plain
+  // hole a millimetre larger all round (its sides then never sit in the same
+  // plane as the opening's own, to flicker through each other)
+  for (const p of pieces)
+    for (const op of p.ops.filter((o) => !o.through))
+      for (const q of pieces) {
+        if (q === p) continue;
+        const k = lyingAgainst(p, q);
+        if (!k) continue;
+        const a = Math.max(op.a, k.lo),
+          b = Math.min(op.b, k.hi);
+        if (b - a < 50) continue;
+        const ta = (a - k.pa) * k.dir,
+          tb = (b - k.pa) * k.dir;
+        q.ops.push({
+          ...op,
+          a: Math.min(ta, tb) - 1,
+          b: Math.max(ta, tb) + 1,
+          sill: Math.max(0, op.sill - 1),
+          head: op.head + 1,
+          through: true,
+        });
+      }
+  for (const p of pieces) p.ops = tidyOpenings(p.ops, p.L);
   return pieces;
+}
+
+/* How wall b lies against wall a: parallel, and so close that their
+   thicknesses overlap or almost touch, as the walls of two rooms along the
+   edge they share, side by side. A door in one is a door in both: the plan,
+   the 3D view and walking all treat it so, and nobody has to delete a room's
+   wall to put a door through. Returns { d, t, lo, hi, pa, dir }: b's
+   centreline d mm off a's along a's n, b's thickness, the stretch [lo, hi]
+   of a (mm from its start) b runs along, where b starts along a, and whether
+   b runs the same way (1) or back (-1). Null if b does not lie against a. */
+export function lyingAgainst(a, b, tol = 30) {
+  const La = Math.hypot(a.x2 - a.x1, a.y2 - a.y1),
+    Lb = Math.hypot(b.x2 - b.x1, b.y2 - b.y1);
+  if (La < 1 || Lb < 1) return null;
+  const ux = (a.x2 - a.x1) / La,
+    uy = (a.y2 - a.y1) / La;
+  const vx = (b.x2 - b.x1) / Lb,
+    vy = (b.y2 - b.y1) / Lb;
+  if (Math.abs(ux * vy - uy * vx) > SAME_DIR) return null;
+  const ta = a.t || 150,
+    tb = b.t || 150;
+  const d = (b.x1 - a.x1) * -uy + (b.y1 - a.y1) * ux;
+  if (Math.abs(d) > (ta + tb) / 2 + tol) return null;
+  const pa = (b.x1 - a.x1) * ux + (b.y1 - a.y1) * uy,
+    pb = (b.x2 - a.x1) * ux + (b.y2 - a.y1) * uy;
+  const lo = Math.max(0, Math.min(pa, pb)),
+    hi = Math.min(La, Math.max(pa, pb));
+  if (hi - lo < 1) return null;
+  return { d, t: tb, lo, hi, pa, dir: pb > pa ? 1 : -1 };
 }
 
 /* an interval minus a set of intervals */
@@ -114,19 +169,39 @@ function subtract([a, b], cuts) {
 }
 
 /* Clamp openings to the wall, drop slivers, and merge any that overlap (two
-   rooms' doors in the same shared wall become one opening). */
+   rooms' doors in the same shared wall become one opening). A window that
+   runs into a door is cut back to the door instead: merged, the two became
+   one hole from the floor up, as wide as both. */
 function tidyOpenings(ops, L) {
-  const out = [];
-  for (const op of ops
+  const clean = ops
     .map((o) => ({ ...o, a: Math.max(0, o.a), b: Math.min(L, o.b) }))
-    .filter((o) => o.b - o.a >= 50 && o.head > o.sill)
-    .sort((p, q) => p.a - q.a)) {
+    .filter((o) => o.b - o.a >= 50 && o.head > o.sill);
+  const doors = clean.filter((o) => o.kind === "door");
+  const windows = clean
+    .filter((o) => o.kind !== "door")
+    .flatMap((o) =>
+      doors.reduce(
+        (parts, d) =>
+          parts.flatMap((w) =>
+            d.b <= w.a || d.a >= w.b
+              ? [w]
+              : [
+                  { ...w, b: d.a },
+                  { ...w, a: d.b },
+                ],
+          ),
+        [o],
+      ),
+    )
+    .filter((o) => o.b - o.a >= 50);
+  const out = [];
+  for (const op of [...doors, ...windows].sort((p, q) => p.a - q.a)) {
     const prev = out[out.length - 1];
     if (prev && op.a < prev.b) {
       prev.b = Math.max(prev.b, op.b);
       prev.sill = Math.min(prev.sill, op.sill);
       prev.head = Math.max(prev.head, op.head);
-      if (op.kind === "door") prev.kind = "door";
+      prev.through = !!(prev.through && op.through); // a real opening keeps its joinery
     } else out.push({ ...op });
   }
   return out;
@@ -239,17 +314,43 @@ export function wallTop(piece, doc) {
       return r ? Math.min(h, ceilingAt(r, p)) : h;
     };
   }
-  const extra = (piece.shared || [])
-    .map((s) => ({ ...s, room: roomOf(s.room) }))
-    .filter((s) => s.room);
+  const extra = standsInFor(piece, doc);
   return (p) => {
     let h = own(p);
     if (extra.length) {
       const u = (p.x - piece.x1) * piece.ux + (p.y - piece.y1) * piece.uy;
-      for (const s of extra) if (u >= s.lo && u <= s.hi) h = Math.max(h, roofHeightAt(s.room, p));
+      // a hair over: the ends of the step's slice are found by interpolating,
+      // and a corner that lands 1e-12 past the end must not drop to the low side
+      for (const s of extra)
+        if (u >= s.lo - 1e-6 && u <= s.hi + 1e-6) h = Math.max(h, roofHeightAt(s.room, p));
     }
     return Math.max(200, h);
   };
+}
+
+/* Where a piece stands in for other rooms' walls, as { room, lo, hi } in mm
+   along it: where their walls overlap it, carried on at each end to the outer
+   face of that room's walls, as far as that room's roof covers the piece. Up
+   to there the piece rises to that roof; stopped at the overlap's end, it
+   left a notch open to the sky at the corner, beside the room's next wall. */
+function standsInFor(piece, doc) {
+  return (piece.shared || []).flatMap((s) => {
+    const room = doc.rooms.find((r) => r.id === s.room && r.points && r.points.length > 2);
+    if (!room) return [];
+    const g = wallFaces(room).outer;
+    return [{ room, lo: s.lo - g, hi: s.hi + g }];
+  });
+}
+
+/* where a room's walls stand relative to its edges: their outer faces, and
+   their inner faces (negative: inside the room) */
+export function wallFaces(room) {
+  const aw = room.autoWalls || {};
+  const t = aw.t || 150;
+  if (aw.mode === "outside") return { outer: t, inner: 0 };
+  if (aw.mode === "centre") return { outer: t / 2, inner: -t / 2 };
+  if (aw.mode === "inside") return { outer: 0, inner: -t };
+  return { outer: 0, inner: 0 };
 }
 
 /* the places along a piece where its height can step or bend: where the
@@ -259,7 +360,7 @@ export function topBreaks(piece, doc, w = 0) {
   const rooms = [piece.room, ...(piece.shared || []).map((s) => s.room)]
     .map((id) => doc.rooms.find((r) => r.id === id))
     .filter(Boolean);
-  for (const s of piece.shared || []) out.push(s.lo - 1, s.lo, s.hi, s.hi + 1);
+  for (const s of standsInFor(piece, doc)) out.push(s.lo - 1, s.lo, s.hi, s.hi + 1);
   const nx = -piece.uy,
     ny = piece.ux;
   for (const r of rooms) {
@@ -270,4 +371,41 @@ export function topBreaks(piece, doc, w = 0) {
     if (Math.abs(k) > 1e-6) out.push((ridge.value - s0) / k);
   }
   return out;
+}
+
+/* The middle of each piece's own group of walls: the walls that touch it, and
+   the walls touching those, and so on; a building drawn with free walls. The
+   3D view cuts away the walls between the camera and the middle of their own
+   building, not the middle of the whole plan, which may be off to one side
+   when the plan holds more than one building. One point per piece. */
+export function groupCentres(pieces) {
+  const parent = pieces.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const a = (p) => ({ x: p.x1, y: p.y1 }),
+    b = (p) => ({ x: p.x2, y: p.y2 });
+  for (let i = 0; i < pieces.length; i++)
+    for (let j = i + 1; j < pieces.length; j++) {
+      const p = pieces[i],
+        q = pieces[j];
+      const reach = (p.t + q.t) / 2 + 20;
+      const near =
+        segCross(a(p), b(p), a(q), b(q)) ||
+        Math.min(
+          distToSeg(a(p), a(q), b(q)),
+          distToSeg(b(p), a(q), b(q)),
+          distToSeg(a(q), a(p), b(p)),
+          distToSeg(b(q), a(p), b(p)),
+        ) <= reach;
+      if (near) parent[find(i)] = find(j);
+    }
+  const pts = new Map();
+  pieces.forEach((p, i) => {
+    const g = find(i);
+    if (!pts.has(g)) pts.set(g, []);
+    pts.get(g).push(a(p), b(p));
+  });
+  const centre = new Map(
+    [...pts].map(([g, list]) => [g, (({ cx, cy }) => ({ x: cx, y: cy }))(bbox(list))]),
+  );
+  return pieces.map((_, i) => centre.get(find(i)));
 }

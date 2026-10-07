@@ -116,18 +116,43 @@ size. Any extra margin rescales a sheet whose title block states a scale.
 
 **Use `??`, not `||`, for numbers that can be 0** (heights, offsets).
 
+**Never offset an outline edge by edge.** It folds over itself wherever an edge
+is shorter than the offset, and the roofs broke up into swallowtails and
+spikes on a real plan. Grow, shrink, join and cut outlines with
+`domain/polyclip.js` (Clipper, integers in tenths of a millimetre).
+
+**A step in a wall's top has corners found by interpolating.** One landed
+5e-13 mm past the end of the stretch that rises to the higher roof, dropped to
+the low side and opened a hole through the wall. `wallTop` compares with a
+hair of tolerance.
+
+**Two openings that overlap are not always one opening.** The same door in
+two coincident walls merges; a window drawn running into a door is cut back to
+it. Merging those made one hole from the floor up, as wide as both.
+
 ## The 3D view
 
 - **three.js stays inside `src/view3d/`,** and the plan reaches it only
   through `ui/View3DLoader.jsx`. One static import of `view3d/` or `three`
-  from plan code puts the whole library into the main bundle.
+  from plan code puts the whole library into the main bundle. The same goes
+  for Clipper: only `domain/roofs.js` and `domain/wallfaces.js` import
+  `domain/polyclip.js`, and only `view3d/` imports those two.
 - **The geometry decisions are domain code with tests:** which walls are drawn
-  (`wallPieces`: walls on the same line are merged, their openings shared),
-  how corners close (`pieceEnds`), roof heights past the walls
-  (`roofHeightAt`), where walking starts and what stops it (`walk.js`),
-  camera framing. `view3d/` only turns them into meshes. Walking uses the same
-  wall pieces the view draws, so a door you can see is a door you can walk
-  through.
+  (`wallPieces`: walls on the same line are merged, their openings shared; a
+  door in a wall lying against another, as rooms drawn with a wall each leave
+  them, is copied into it as a plain `through` hole), how corners close
+  (`pieceEnds`), roof heights past the walls (`roofHeightAt`), how high a wall
+  rises where it stands in for a higher room's (`wallTop`), the roofs
+  (`planRoofs`), which parts of a face are indoors (`faceParts`), where
+  walking starts and what stops it (`walk.js`), camera framing. `view3d/` only
+  turns them into meshes. Walking uses the same wall pieces the view draws, so
+  a door you can see is a door you can walk through.
+- **Roofs:** flat rooms of one height that stand together share one roof; a
+  wall two roofs share goes to the one higher along it (the mean height along
+  the band, not the peak); eaves end on the line of a shared wall, and keep off
+  another roof's ground unless they clear it by `ROOF_BUILDUP` and more. Check
+  junctions by eye from several sides: `tests/roofs.test.js` pins the
+  outlines, not how they look.
 - **Models fill their footprint and stay under `hz`.** `tests/cabin.test.js`
   checks every seed piece; only a tap may rise above a counter. A model faces
   +z, which is plan +y; a piece with a front goes in `FACING` in

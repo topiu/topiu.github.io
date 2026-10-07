@@ -36,6 +36,9 @@ src/
     labels.js      fitting names into outlines
     plancheck.js   furniture overlaps and door swings
     wallpieces.js  walls as solids: overlaps merged, corners mitred, roof heights
+    roofs.js       roof outlines: joined, overhanging, where roofs meet (3D only)
+    wallfaces.js   which parts of a wall's faces are indoors (3D only)
+    polyclip.js    polygon arithmetic (Clipper) for the two above (3D only)
     walk.js        walking in 3D: start point, wall collision, camera framing
     sun.js         where the sun is at a date, time and place
   storage.js       localStorage keys, backup and restore
@@ -116,15 +119,26 @@ If the fetch fails, the view offers a reload.
 - **Orbit** opens framed to fit the screen, with the roof off and the outside
   walls facing the camera cut down to their footprint, so you can see into the
   rooms. With the roof on you see the cabin from outside.
-- **Walk** starts just inside the front door (the first door in a room's wall),
-  looking in. Drag to look, tap the floor to walk there, or use the stick
-  (touch) or WASD (keyboard). Walls stop you and doors let you through.
+- **Walk** starts just inside the front door (a door with the outdoors on one
+  side), looking whichever way sees furthest into the cabin. Drag to look, tap
+  the floor to walk there, or use the stick (touch) or WASD (keyboard). Walls
+  stop you and doors let you through.
 - Walls are logs, with real holes for doors and windows, frames, glass and a
   door leaf standing open towards its swing side. Two walls on the same line,
   as two rooms' centred walls on a shared edge are, are drawn once, and an
-  opening in either goes through both. Corners are mitred.
-- Each room's roof follows its ceiling, overhangs the outside walls, and meets
-  the next room's roof halfway over a wall they share.
+  opening in either goes through both. Rooms drawn with a wall each leave two
+  walls lying against each other: a door in one goes through the other as a
+  plain hole, on the plan, in 3D and for walking. A window drawn running into
+  a door is cut back to it. Corners are mitred. A face is dressed as inside
+  wall only where it faces a room, below that room's ceiling.
+- Roofs follow the ceilings and overhang the outer face of the walls by
+  450 mm. Rooms with a flat ceiling at one height that stand together share
+  one roof, with no seam over the walls between them; a sloping ceiling has a
+  roof of its own. Where two roofs meet, the wall they share goes to the one
+  higher along it: the wall rises to that roof, which covers it, and the lower
+  roof stops at its face. Each one's eaves end on the line of that wall, and a
+  higher eave runs straight on over the corner of a lower roof. A building
+  drawn with free walls only has no rooms, so no floor or roof.
 - Seed furniture has models of its own, scaled to the piece and always within
   its footprint and height. Custom shapes are their outline raised to their
   height. Unrotated, a model faces plan +y (down the screen); the plan draws the
@@ -139,6 +153,9 @@ If the fetch fails, the view offers a reload.
 - Surfaces are drawn by code (`view3d/textures.js`); there are no image files.
   Nothing is drawn unless something changed, and the sun's shadows are redrawn
   only when what casts them changes, which keeps a phone cool.
+
+Libraries: React and three.js (both MIT), and Angus Johnson's Clipper
+(`clipper-lib`, Boost Software License) for the roofs' polygon arithmetic.
 
 ## Deploy
 

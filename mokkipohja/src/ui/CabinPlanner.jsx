@@ -17,6 +17,7 @@ import {
 } from "../domain/rooms";
 import { snapItemPos, snapPoint } from "../domain/snapping";
 import { siteOf } from "../domain/sun";
+import { lyingAgainst } from "../domain/wallpieces";
 import { b64ToBytes, buildPdf, download } from "../export/pdf";
 import { PAPERS, renderSheet } from "../export/sheet";
 import { groupOf, nameOf, tr } from "../i18n";
@@ -1997,12 +1998,15 @@ export function CabinPlanner() {
               });
             const o1 = o.off,
               o2 = o.off + o.w;
-            const quad = [
-              P(o1, -w.t / 2 - 1),
-              P(o2, -w.t / 2 - 1),
-              P(o2, w.t / 2 + 1),
-              P(o1, w.t / 2 + 1),
-            ];
+            // the gap goes through any wall lying against this one too: the
+            // neighbouring room's own wall along the same edge
+            const against = doc.walls
+              .filter((x) => x.id !== w.id)
+              .map((x) => lyingAgainst(w, x))
+              .filter((k) => k && k.lo < o2 && k.hi > o1);
+            const nLo = Math.min(-w.t / 2, ...against.map((k) => k.d - k.t / 2)) - 1,
+              nHi = Math.max(w.t / 2, ...against.map((k) => k.d + k.t / 2)) + 1;
+            const quad = [P(o1, nLo), P(o2, nLo), P(o2, nHi), P(o1, nHi)];
             const isSel = sel?.kind === "opening" && sel.id === o.id;
             const hinge = o.flip ? o2 : o1;
             const dir = o.flip ? -1 : 1;
