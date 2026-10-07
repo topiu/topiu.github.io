@@ -48,3 +48,44 @@ things look.
 For a refactor that should not change behaviour, `tools/port/parity.cjs` runs a
 reference build and the new one through the same scripted session and diffs
 the DOM, storage and canvas output after every step.
+
+## Traps already hit here
+
+These are the October 2026 review findings, now fixed. Each has a test or a
+before/after browser check.
+
+**Room walls follow their edges by index.** A wall generated for a room has
+`room` and `edge`, and doors attach to the wall's id. Splicing a corner into
+`points` shifted every later edge's doors onto the next wall and dropped the
+last edge's. Add and delete corners only through `insertRoomCorner` and
+`deleteRoomCorner` in `domain/rooms.js`. They renumber walls, send an opening
+on a split edge to its half, and keep openings in place when edges merge
+(`tests/corners.test.js`, all three wall modes).
+
+**Rebuilding walls clamps openings.** `rebuildRoomWalls` shrinks a door to fit
+its wall. Rebuilding on the live state at every drag move let a wall that was
+short for a moment shrink its doors for good. Drags are rebuilt from the state
+at the start of the gesture (`g.snapshot`).
+
+**An index can outlive what it points into.** `selVert` survived a switch to a
+room with fewer corners, and the render read past the end of `points` and
+blanked the app. Effects run after render, so a reset in an effect is not
+enough: guard the read itself.
+
+**A debounce must be flushed, never cancelled, before the data changes owner.**
+Every plan switch goes through `openDoc`, which writes the pending save first
+and clears undo history. Pending saves are also flushed on `pagehide` and when
+the page is hidden. The plan list is merged from storage at write time:
+writing an in-memory copy put deleted plans back.
+
+**Undo history belongs to one plan.** Keep it across a plan switch and Undo
+writes the old plan over the new one.
+
+**Pixels outside the plan document are outside undo.** That's why pictures are
+keyed per import and only pruned when no history can need them.
+
+**Restore merges; it doesn't replace.** See the README for the rules.
+
+**There is a root error boundary** (`ui/ErrorBoundary.jsx`), plus one around
+the 3D and section views. The fallback can still reload and save a backup.
+Treat it as a floor: a throwing render path still needs fixing and a test.

@@ -51,7 +51,7 @@ Everything is stored under the `mokkipohja:` prefix:
 | --- | --- |
 | `plans:index` | `[{ id, name, updated }]`, the plan list |
 | `plan:<id>` | one plan (below) |
-| `planimg:<id>` | the plan's background image as a data URL |
+| `planimg:<id>[:<key>]` | background pictures as data URLs (see `image.key` below) |
 | `library:v2` | the furniture library: seed pieces plus custom shapes |
 | `settings:v1` | `{ lang, grid, showHead, showGrid, showDims, invert3d }` |
 
@@ -66,7 +66,16 @@ A plan is `{ id, name, wallT, walls, rooms, openings, items, image }`:
   plus optional `sill` and `head`.
 - **items** `{ id, defId, x, y, rot }`, where `rot` is in degrees and `defId`
   points into the library.
-- **image** `{ natW, natH, mmPerPx, x, y, opacity, locked }`, or `null`.
+- **image** `{ key, natW, natH, mmPerPx, x, y, opacity, locked }`, or `null`.
+  `key` names the stored picture. Plans from before October 2026 have no `key`
+  and use `planimg:<id>`. Each import gets a new key, so removing or replacing
+  a picture leaves the old pixels for Undo. Pictures that no plan shows are
+  deleted at startup and when you leave a plan, the two points where undo
+  history is discarded.
+
+Library pieces are `{ id, type: "rect" | "circle" | "poly", ... , hz }`. A seed
+piece has a `key` (its translation); a custom shape has a `name`. A piece
+restored from another device's backup may carry `hidden: true` (see below).
 
 Plan coordinates have y pointing down, as on screen. The 3D view flips y.
 
@@ -75,6 +84,16 @@ unchanged, so key names never change and a new field always has a default for
 plans that lack it. *Save backup* writes `{ app: "mokkipohja", version: 1,
 saved, data }`, where `data` maps each key (without the prefix) to its stored
 string, and *Restore* reads the same format.
+
+*Restore* merges the backup into what the device already has:
+
+- Plans and pieces in the backup replace local ones with the same id. Local
+  plans the backup lacks stay, and so do this device's settings.
+- Every device seeds its own library with its own ids. So a backup's seed piece
+  whose `key` already exists here is kept for the plans that use it, but marked
+  `hidden` so the library doesn't list two sofas.
+- Restore is all or nothing: if storage fills up part-way, every key it wrote is
+  put back.
 
 ## Deploy
 
