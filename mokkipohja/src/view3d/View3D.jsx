@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { C, D2R, MONO, TAP_SLOP, clamp } from "../core";
+import { C, D2R, MONO, SANS, TAP_SLOP, clamp } from "../core";
+import { compassPoint, siteOf, sunDirection, sunPosition } from "../domain/sun";
 import { blockingSegments, fitPointsDistance, walkMove, walkStart } from "../domain/walk";
+import { download } from "../export/pdf";
 import { Btn } from "../ui/atoms";
+import { Glyph } from "../ui/glyphs";
 import { buildCabin } from "./cabin";
 import { makeMaterials } from "./materials";
 import { Stage } from "./stage";
@@ -13,7 +16,8 @@ import { Stage } from "./stage";
    the camera and the rooms cut away, so a phone held upright shows the whole
    plan furnished. Walk starts just inside the front door; drag to look, tap
    the floor to walk there, use the stick or the keys. Walls stop you; doors
-   let you through.
+   let you through. The sun study puts the sun where it is at a date and
+   time, for the plan's north and latitude.
    ============================================================ */
 
 const MM = 0.001;
@@ -39,8 +43,9 @@ const KEYS = new Set([
   "NumpadSubtract",
 ]);
 
-export function View3D({ doc, defs, t, onClose, invert, setInvert }) {
+export function View3D({ doc, defs, lang, t, onClose, invert, setInvert, onSite }) {
   const [mode, setMode] = useState("orbit");
+  const [sun, setSun] = useState(null); // the sun study: { day of the year, minutes }, or off
   const [vis, setVis] = useState({
     roofOrbit: false,
     roofWalk: true,
@@ -146,7 +151,7 @@ export function View3D({ doc, defs, t, onClose, invert, setInvert }) {
     s.stage.controls.target.copy(centre);
     s.stage.controls.update();
     const sa = Math.atan2(h.y, h.x) - 70 * D2R;
-    s.stage.setSun(Math.cos(sa), Math.sin(sa));
+    s.stage.setStudioSun(Math.cos(sa), Math.sin(sa));
     s.stage.invalidate();
   };
 
@@ -232,9 +237,68 @@ export function View3D({ doc, defs, t, onClose, invert, setInvert }) {
       setLens("orbit");
       if (!userMoved.current) frameOrbit();
     }
-  }, [doc, defs]);
+    // the plan's site (north, latitude) changes from here; the model does not
+  }, [doc.walls, doc.rooms, doc.openings, doc.items, defs]);
 
   useEffect(applyVis, [vis, mode]);
+
+  /* ---- the sun study ---- */
+  const site = siteOf(doc);
+  const sunNow = useMemo(() => {
+    if (!sun) return null;
+    const date = new Date(
+      new Date().getFullYear(),
+      0,
+      sun.day,
+      Math.floor(sun.minutes / 60),
+      sun.minutes % 60,
+    );
+    return { date, ...sunPosition(date, site.lat, site.lon) };
+  }, [sun, site.lat, site.lon]);
+  useEffect(() => {
+    const s = S.current;
+    if (!s) return;
+    if (!sunNow) s.stage.endStudy();
+    else
+      s.stage.setStudySun(
+        sunDirection(sunNow.azimuth, sunNow.elevation, site.north),
+        sunNow.elevation,
+      );
+  }, [sunNow, site.north]);
+  /* opens on today at the time it is now, or at noon if the sun is down */
+  const toggleSun = () => {
+    if (sun) return setSun(null);
+    const now = new Date();
+    const day = Math.round(
+      (Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) -
+        Date.UTC(now.getFullYear(), 0, 0)) /
+        86400000,
+    );
+    let minutes = Math.round((now.getHours() * 60 + now.getMinutes()) / 10) * 10;
+    if (sunPosition(now, site.lat, site.lon).elevation < 5) minutes = 12 * 60;
+    setSun({ day: Math.min(365, day), minutes: Math.min(1430, minutes) });
+  };
+
+  /* ---- a picture of the view, to share or keep ---- */
+  const snapshot = async () => {
+    const s = S.current;
+    if (!s) return;
+    s.stage.dirty = true;
+    s.stage.render(); // read straight after drawing, before the browser clears it
+    const url = s.stage.renderer.domElement.toDataURL("image/png");
+    const blob = await (await fetch(url)).blob();
+    const name = `${(doc.name || "Mökkipohja").replace(/[\\/:*?"<>|]+/g, " ").trim()} 3D.png`;
+    const file = typeof File === "function" ? new File([blob], name, { type: "image/png" }) : null;
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: doc.name });
+        return;
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+      }
+    }
+    download(blob, name);
+  };
 
   useEffect(() => {
     const s = S.current;
@@ -424,7 +488,8 @@ export function View3D({ doc, defs, t, onClose, invert, setInvert }) {
   };
   const onDown = (e) => {
     if (mode !== "walk") return;
-    if (e.target.closest && e.target.closest("button")) return; // the height buttons are not the floor
+    // the buttons and the sun panel are not the floor
+    if (e.target.closest && e.target.closest("button, input, label, [data-ui]")) return;
     const p = localPt(e);
     if (
       coarse &&
@@ -544,6 +609,7 @@ export function View3D({ doc, defs, t, onClose, invert, setInvert }) {
     </Btn>
   );
   const st = stickUI;
+  const iconBtn = { padding: "4px 7px", display: "flex", alignItems: "center" };
   const pill = {
     background: "rgba(27,37,40,0.8)",
     border: `1px solid ${C.line}`,
@@ -598,6 +664,18 @@ export function View3D({ doc, defs, t, onClose, invert, setInvert }) {
           {t("invertDrag")}
         </Btn>
         <div style={{ display: "flex", gap: 5, marginLeft: "auto" }}>
+          <Btn
+            small={true}
+            active={!!sun}
+            onClick={toggleSun}
+            title={t("sunStudy")}
+            style={iconBtn}
+          >
+            <Glyph name="sun" size={17} />
+          </Btn>
+          <Btn small={true} onClick={snapshot} title={t("snapshot")} style={iconBtn}>
+            <Glyph name="camera" size={17} />
+          </Btn>
           <Toggle k={roofKey} label={t("roofOn")} />
           <Toggle k="walls" label={t("wallsTab")} />
           <Toggle k="furniture" label={t("furniture")} />
@@ -684,22 +762,34 @@ export function View3D({ doc, defs, t, onClose, invert, setInvert }) {
             </div>
           </React.Fragment>
         )}
-        <div
-          style={{
-            position: "absolute",
-            left: 12,
-            top: 10,
-            right: 12,
-            fontFamily: MONO,
-            fontSize: 10.5,
-            color: "rgba(30,40,42,0.7)",
-            pointerEvents: "none",
-            lineHeight: 1.5,
-          }}
-        >
-          {mode === "orbit" ? t("orbitHint") : t("walkHint")}
-          {!coarse && <div>{t("keysHint")}</div>}
-        </div>
+        {sunNow ? (
+          <SunPanel
+            t={t}
+            lang={lang}
+            sun={sun}
+            setSun={setSun}
+            now={sunNow}
+            site={site}
+            onSite={(patch) => onSite && onSite(patch)}
+          />
+        ) : (
+          <div
+            style={{
+              position: "absolute",
+              left: 12,
+              top: 10,
+              right: 12,
+              fontFamily: MONO,
+              fontSize: 10.5,
+              color: "rgba(30,40,42,0.7)",
+              pointerEvents: "none",
+              lineHeight: 1.5,
+            }}
+          >
+            {mode === "orbit" ? t("orbitHint") : t("walkHint")}
+            {!coarse && <div>{t("keysHint")}</div>}
+          </div>
+        )}
         {(failed || lost) && (
           <div
             style={{
@@ -720,6 +810,138 @@ export function View3D({ doc, defs, t, onClose, invert, setInvert }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* The sun study's controls: the time of day, the day of the year, and where
+   the cabin is: which way north is on the plan, and how far north it stands.
+   The last two belong to the plan and are saved with it. */
+function SunPanel({ t, lang, sun, setSun, now, site, onSite }) {
+  const hh = String(Math.floor(sun.minutes / 60)).padStart(2, "0"),
+    mm = String(sun.minutes % 60).padStart(2, "0");
+  const fi = lang === "fi";
+  const day = now.date.toLocaleDateString(
+    fi ? "fi-FI" : "en-GB",
+    fi ? { day: "numeric", month: "numeric" } : { day: "numeric", month: "short" },
+  );
+  const up = now.elevation > 0;
+  const range = { width: "100%", accentColor: C.accent, margin: 0 };
+  const rows = [
+    [
+      t("sunTime"),
+      `${hh}:${mm}`,
+      <input
+        type="range"
+        min={0}
+        max={1430}
+        step={10}
+        value={sun.minutes}
+        onChange={(e) => setSun((v) => ({ ...v, minutes: +e.target.value }))}
+        style={range}
+      />,
+    ],
+    [
+      t("sunDate"),
+      day,
+      <input
+        type="range"
+        min={1}
+        max={365}
+        value={sun.day}
+        onChange={(e) => setSun((v) => ({ ...v, day: +e.target.value }))}
+        style={range}
+      />,
+    ],
+    [
+      t("north"),
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+        <svg
+          width="12"
+          height="12"
+          viewBox="-6 -6 12 12"
+          style={{ transform: `rotate(${site.north}deg)` }}
+        >
+          <path d="M0 -5.5 L2.6 3.5 L0 1.8 L-2.6 3.5 Z" fill="currentColor" />
+        </svg>
+        {site.north}°
+      </span>,
+      <input
+        type="range"
+        min={-180}
+        max={180}
+        step={5}
+        value={site.north}
+        onChange={(e) => onSite({ north: +e.target.value })}
+        style={range}
+      />,
+    ],
+    [
+      t("latitude"),
+      `${site.lat.toFixed(1)}°`,
+      <input
+        type="range"
+        min={55}
+        max={71}
+        step={0.5}
+        value={site.lat}
+        onChange={(e) => onSite({ lat: +e.target.value })}
+        style={range}
+      />,
+    ],
+  ];
+  return (
+    <div
+      data-ui={true}
+      style={{
+        position: "absolute",
+        left: 8,
+        right: 8,
+        top: 8,
+        maxWidth: 440,
+        background: "rgba(27,37,40,0.88)",
+        border: `1px solid ${C.line}`,
+        borderRadius: 12,
+        padding: "8px 12px 4px",
+        color: C.text,
+        fontFamily: SANS,
+        fontSize: 12.5,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          fontFamily: MONO,
+          fontSize: 12,
+          marginBottom: 2,
+        }}
+      >
+        <span>
+          {day} {hh}:{mm}
+        </span>
+        <span style={{ color: up ? "#F3C969" : C.dim }}>
+          {up
+            ? `${Math.round(now.elevation)}° · ${t("cp" + compassPoint(now.azimuth))}`
+            : t("sunDown")}
+        </span>
+      </div>
+      {rows.map(([label, value, input]) => (
+        <label
+          key={label}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "76px 1fr 54px",
+            alignItems: "center",
+            gap: 8,
+            height: 30,
+          }}
+        >
+          <span style={{ color: C.dim }}>{label}</span>
+          {input}
+          <span style={{ fontFamily: MONO, textAlign: "right" }}>{value}</span>
+        </label>
+      ))}
     </div>
   );
 }

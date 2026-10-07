@@ -18,11 +18,13 @@ export const Label = ({ children, style }) => (
     {children}
   </div>
 );
-export function Btn({ children, onClick, active, tone, wide, small, style }) {
+export function Btn({ children, onClick, active, tone, wide, small, style, title }) {
   const bg = active ? C.accent : tone === "bad" ? "rgba(180,64,47,0.18)" : C.chrome3;
   return (
     <button
       onClick={onClick}
+      title={title}
+      aria-label={title}
       style={{
         background: bg,
         color: tone === "bad" && !active ? "#F0A79A" : C.text,

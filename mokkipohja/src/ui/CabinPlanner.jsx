@@ -16,6 +16,7 @@ import {
   withAutoWalls,
 } from "../domain/rooms";
 import { snapItemPos, snapPoint } from "../domain/snapping";
+import { siteOf } from "../domain/sun";
 import { b64ToBytes, buildPdf, download } from "../export/pdf";
 import { PAPERS, renderSheet } from "../export/sheet";
 import { groupOf, nameOf, tr } from "../i18n";
@@ -309,6 +310,18 @@ export function CabinPlanner() {
       });
     },
     [push],
+  );
+  /* Where the cabin is (north and latitude, for the sun study). A slider
+     sends a burst of changes; only the first of a burst is an undo step. */
+  const siteBurst = useRef(0);
+  const updateSite = useCallback(
+    (patch) => {
+      const apply = (d) => ({ ...d, site: { ...siteOf(d), ...patch } });
+      if (Date.now() - siteBurst.current > 1000) commit(apply);
+      else setDoc(apply);
+      siteBurst.current = Date.now();
+    },
+    [commit],
   );
   const undo = () => {
     const p = history.current.pop();
@@ -2600,6 +2613,21 @@ export function CabinPlanner() {
               {bar.mm >= 1000 ? bar.mm / 1000 + " m" : bar.mm + " mm"}
             </div>
           </div>
+          {doc.site?.north != null && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <svg
+                width="20"
+                height="20"
+                viewBox="-10 -10 20 20"
+                style={{ transform: `rotate(${doc.site.north}deg)` }}
+              >
+                <path d="M0 -9 L4.2 5.5 L0 2.8 L-4.2 5.5 Z" fill={C.ink} />
+              </svg>
+              <div style={{ fontFamily: MONO, fontSize: 10.5, color: "#5F6659", lineHeight: 1.2 }}>
+                {t("cpN")}
+              </div>
+            </div>
+          )}
         </div>
         <div
           data-ui={true}
@@ -3822,7 +3850,9 @@ export function CabinPlanner() {
           <View3DLoader
             doc={doc}
             defs={defs}
+            lang={lang}
             t={t}
+            onSite={updateSite}
             onClose={() => setShow3d(false)}
             invert={invert3d}
             setInvert={setInvert3d}
