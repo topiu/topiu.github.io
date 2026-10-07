@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { C, D2R, DRAG_SLOP, MONO, SANS, TAP_SLOP, clamp, fmt, uid } from "../core";
+import { C, D2R, DRAG_SLOP, GROUP, MONO, SANS, TAP_SLOP, clamp, fmt, shade, tint, uid } from "../core";
+import { fitLabel, labelRect, placeRoomLabel } from "../domain/labels";
+import { planConflicts } from "../domain/plancheck";
 import { ceilingCrossings, defaultCeiling, headroomFor, roomAt } from "../domain/ceilings";
 import { bbox, defOutline, distToSeg, itemPoly, itemPolyTest, pointInPoly, polyArea, polysIntersect, raySpan, rotP, wallPoly, wallPolyTest } from "../domain/geometry";
 import { seedLibrary } from "../domain/library";
@@ -112,6 +114,9 @@ export function CabinPlanner() {
       const lib = await sGet(KEY_LIB);
       if (lib && Array.isArray(lib) && lib.length) setLibrary(lib);
       const st = await sGet(KEY_SET);
+      /* a first visit follows the phone's language; after that the saved
+         choice wins, so nobody who already uses it gets switched */
+      if (!(st && st.lang) && /^fi\b/i.test(navigator.language || "")) setLang("fi");
       if (st) {
         if (st.lang) setLang(st.lang);
         if (typeof st.grid === "number") setGrid(st.grid);
@@ -237,6 +242,11 @@ export function CabinPlanner() {
         invert3d,
       });
   }, [lang, grid, showHead, showGrid, showDims, invert3d, ready]);
+
+  // screen readers and the browser's translate offer should know the language
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
 
   /* ---- resize ---- */
   useEffect(() => {
@@ -1402,26 +1412,11 @@ export function CabinPlanner() {
     return perp === "x" ? b.cx : b.cy;
   }, [sectionRoom, selItem]);
 
-  /* ---- overlaps ---- */
-  const overlaps = useMemo(() => {
-    const bad = new Set();
-    const polys = doc.items
-      .map((it) => ({
-        id: it.id,
-        p: defs[it.defId] ? itemPolyTest(it, defs[it.defId]) : null,
-      }))
-      .filter((x) => x.p);
-    const wt = doc.walls.map(wallPolyTest);
-    for (let i = 0; i < polys.length; i++) {
-      for (let j = i + 1; j < polys.length; j++)
-        if (polysIntersect(polys[i].p, polys[j].p)) {
-          bad.add(polys[i].id);
-          bad.add(polys[j].id);
-        }
-      for (const w of wt) if (polysIntersect(polys[i].p, w)) bad.add(polys[i].id);
-    }
-    return bad;
-  }, [doc.items, doc.walls, defs]);
+  /* ---- conflicts ----
+     overlaps that matter (a chair tucked under a table does not) and pieces
+     standing where a door swings */
+  const conflicts = useMemo(() => planConflicts(doc, defs), [doc.items, doc.walls, doc.openings, defs]);
+  const overlaps = conflicts.overlap;
 
   /* ---- grid lines ---- */
   const gridLines = useMemo(() => {
@@ -1580,18 +1575,100 @@ export function CabinPlanner() {
     y: p.y * vp.s + vp.oy,
   });
   const labels = [];
+
+  /* ---- furniture and room labels ----
+     Each piece gets the longest form of its name that fits its outline at the
+     current zoom (domain/labels.js); the selected piece always shows its whole
+     name. Room labels go where they do not sit on furniture. */
+  const planLabels = [];
+  const furnRects = [];
+  for (const it of doc.items) {
+    const def = defs[it.defId];
+    if (!def) continue;
+    const b = bbox(itemPoly(it, def).map(S));
+    furnRects.push({ x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 });
+    const ob = bbox(defOutline(def)); // the piece's own frame, before rotation
+    let rot = (((it.rot || 0) % 180) + 180) % 180; // text never upside down
+    if (rot > 90) rot -= 180;
+    const name = nameOf(def, lang);
+    const isSel = sel?.kind === "item" && sel.id === it.id;
+    const col = shade(GROUP[def.groupKey] || GROUP.custom, 0.55);
+    const f = fitLabel(name, ob.w * vp.s, ob.h * vp.s);
+    if (isSel && (!f || f.t !== name))
+      planLabels.push({ x: b.cx, y: b.cy, t: name, s: 10, c: col, w: 600, box: true });
+    else if (f) {
+      const r = rot + f.rot;
+      planLabels.push({ x: b.cx, y: b.cy, t: f.t, s: f.s, c: col, w: 600, rot: r });
+      const lr = labelRect(b.cx, b.cy, f.t, f.s, Math.abs(r) > 45 ? -90 : 0);
+      furnRects.push(lr);
+    }
+  }
+  for (const r of doc.rooms) {
+    const sp = r.points.map(S);
+    const area = `${(polyArea(r.points) / 1e6).toFixed(1)} m²`;
+    const name = r.name || "";
+    const sz = 11;
+    const lw = Math.max(name.length, area.length) * 0.62 * sz + 10;
+    const lh = (name ? 2 : 1) * sz * 1.3;
+    const roomW = bbox(sp).w;
+    if (lw > roomW * 0.9) continue; // too small to label at this zoom
+    const at = placeRoomLabel(sp, lw, lh, furnRects);
+    if (name)
+      planLabels.push({ x: at.x, y: at.y - sz * 0.65, t: name, s: sz, c: "#5E6658", w: 650, box: at.crowded });
+    planLabels.push({
+      x: at.x,
+      y: name ? at.y + sz * 0.65 : at.y,
+      t: area,
+      s: sz - 1,
+      c: "#7A8172",
+      w: 600,
+      box: at.crowded,
+    });
+  }
+
+  /* Ten tools did not fit a phone's width: the bar scrolled, and 3D and Export
+     sat off-screen. Drawing tools stay in the bar, the occasional ones go
+     behind More (which shows the active one), and 3D floats over the plan. */
   const tools = [
     ["select", "select", t("select")],
     ["wall", "wall", t("wall")],
     ["room", "room", t("room")],
     ["door", "door", t("opening")],
     ["furniture", "furn", t("furniture")],
-    ["tape", "tape", t("measure")],
-    ["image", "image", t("image")],
-    ["section", "section", t("section")],
-    ["view3d", "cube", t("view3d")],
-    ["export", "export", t("xport")],
   ];
+  const moreTools = [
+    ["tape", "tape", t("measure"), t("measureDesc")],
+    ["image", "image", t("image"), t("imageDesc")],
+    ["section", "section", t("section"), t("sectionDesc")],
+    ["export", "export", t("xport"), t("exportDesc")],
+  ];
+  const isActive = (k) =>
+    mode === k ||
+    (k === "furniture" && mode === "place") ||
+    (k === "image" && mode === "calibrate") ||
+    (k === "section" && showSection) ||
+    (k === "view3d" && show3d);
+  const activeMore = moreTools.find(([k]) => isActive(k));
+  const activateTool = (k) => {
+    setDraft(null);
+    setGhost(null);
+    if (k === "furniture") return setSheet("library");
+    if (k === "image") return setSheet("image");
+    if (k === "export") {
+      setXpOut(null);
+      return setSheet("export");
+    }
+    if (k === "more") return setSheet("more");
+    setSheet(null);
+    if (k === "section") return setShowSection((v) => !v);
+    if (k === "view3d") return setShow3d(true);
+    if (k === "tape") {
+      setTape(null);
+      return setMode("tape");
+    }
+    setMode(k);
+    setSel(null);
+  };
   const totalArea = doc.rooms.reduce((a, r) => a + polyArea(r.points), 0) / 1e6;
   return (
     <div
@@ -1785,16 +1862,7 @@ export function CabinPlanner() {
               .map(S)
               .map((p) => `${p.x},${p.y}`)
               .join(" ");
-            const b = bbox(r.points.map(S));
             const isSel = sel?.kind === "room" && sel.id === r.id;
-            labels.push({
-              x: b.cx,
-              y: b.cy,
-              t: `${(polyArea(r.points) / 1e6).toFixed(1)} m²`,
-              s: 12,
-              c: "#7A8172",
-              w: 600,
-            });
             return (
               <polygon
                 key={r.id}
@@ -1969,12 +2037,19 @@ export function CabinPlanner() {
                       stroke={C.ink}
                       strokeWidth={1.8}
                     />
+                    {conflicts.doors.has(o.id) && (
+                      /* something stands where this door swings */
+                      <polygon
+                        points={[P(hinge, 0), ...swing].map((p) => `${p.x},${p.y}`).join(" ")}
+                        fill={tint(C.bad, 0.12)}
+                      />
+                    )}
                     <polyline
                       points={swing.map((p) => `${p.x},${p.y}`).join(" ")}
                       fill="none"
-                      stroke="#6E7A72"
-                      strokeWidth={1.1}
-                      strokeDasharray="4 3"
+                      stroke={conflicts.doors.has(o.id) ? C.bad : "#6E7A72"}
+                      strokeWidth={conflicts.doors.has(o.id) ? 1.6 : 1.1}
+                      strokeDasharray={conflicts.doors.has(o.id) ? "" : "4 3"}
                     />
                   </React.Fragment>
                 )}
@@ -1993,23 +2068,14 @@ export function CabinPlanner() {
             const poly = itemPoly(it, def);
             const spts = poly.map(S);
             const isSel = sel?.kind === "item" && sel.id === it.id;
-            const bad = overlaps.has(it.id);
-            const b = bbox(spts);
-            if (vp.s * Math.max(bbox(poly).w, bbox(poly).h) > 46)
-              labels.push({
-                x: b.cx,
-                y: b.cy,
-                t: nameOf(def, lang),
-                s: 10,
-                c: "#6B5227",
-                w: 600,
-              });
+            const bad = overlaps.has(it.id) || conflicts.swing.has(it.id);
+            const gc = GROUP[def.groupKey] || GROUP.custom;
             return (
               <g key={it.id}>
                 <polygon
                   points={spts.map((p) => `${p.x},${p.y}`).join(" ")}
-                  fill={bad ? "url(#hatch)" : C.timberFill}
-                  stroke={isSel ? C.accent : bad ? C.bad : C.timber}
+                  fill={bad ? "url(#hatch)" : tint(gc, 0.3)}
+                  stroke={isSel ? C.accent : bad ? C.bad : shade(gc, 0.72)}
                   strokeWidth={isSel ? 2.4 : 1.5}
                 />
                 {isSel &&
@@ -2326,8 +2392,8 @@ export function CabinPlanner() {
               pointerEvents: "none",
             }}
           >
-            {labels.map((l, i) => (
-              <g key={i}>
+            {[...planLabels, ...labels].map((l, i) => (
+              <g key={i} transform={l.rot ? `rotate(${l.rot} ${l.x} ${l.y})` : undefined}>
                 {l.box && (
                   <rect
                     x={l.x - (l.t.length * l.s * 0.31 + 4)}
@@ -2513,6 +2579,30 @@ export function CabinPlanner() {
             gap: 6,
           }}
         >
+          <button
+            onClick={() => activateTool("view3d")}
+            title={t("view3d")}
+            style={{
+              width: 44,
+              height: 44,
+              marginLeft: -6,
+              marginBottom: 4,
+              borderRadius: 12,
+              background: C.accent,
+              border: `1px solid ${C.accent}`,
+              color: "#fff",
+              cursor: "pointer",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 1,
+              boxShadow: "0 4px 14px rgba(0,0,0,0.25)",
+            }}
+          >
+            <Glyph name="cube" size={18} />
+            <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.06em" }}>3D</span>
+          </button>
           {[
             ["+", 1.5],
             ["−", 1 / 1.5],
@@ -2744,6 +2834,16 @@ export function CabinPlanner() {
                       ×
                     </button>
                   </div>
+                  {conflicts.swing.has(selItem.id) && (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "#F0A79A",
+                      }}
+                    >
+                      {t("inSwing")}
+                    </div>
+                  )}
                   {overlaps.has(selItem.id) && (
                     <div
                       style={{
@@ -3643,50 +3743,18 @@ export function CabinPlanner() {
           flexShrink: 0,
         }}
       >
-        {tools.map(([k, g, l]) => {
-          const active =
-            mode === k ||
-            (k === "furniture" && mode === "place") ||
-            (k === "image" && mode === "calibrate") ||
-            (k === "section" && showSection) ||
-            (k === "view3d" && show3d);
+        {[
+          ...tools,
+          activeMore ? ["more", activeMore[1], activeMore[2]] : ["more", "more", t("more")],
+        ].map(([k, g, l]) => {
+          const active = k === "more" ? !!activeMore || sheet === "more" : isActive(k);
           return (
             <button
               key={k}
-              onClick={() => {
-                setDraft(null);
-                setGhost(null);
-                if (k === "furniture") {
-                  setSheet("library");
-                  return;
-                }
-                if (k === "image") {
-                  setSheet("image");
-                  return;
-                }
-                if (k === "section") {
-                  setShowSection((v) => !v);
-                  return;
-                }
-                if (k === "view3d") {
-                  setShow3d(true);
-                  return;
-                }
-                if (k === "export") {
-                  setXpOut(null);
-                  setSheet("export");
-                  return;
-                }
-                if (k === "tape") {
-                  setTape(null);
-                  setMode("tape");
-                  return;
-                }
-                setMode(k);
-                setSel(null);
-              }}
+              onClick={() => activateTool(k)}
               style={{
-                flex: "1 0 62px",
+                flex: "1 1 0",
+                minWidth: 0,
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
@@ -3694,7 +3762,7 @@ export function CabinPlanner() {
                 background: active ? C.accent : "transparent",
                 border: `1px solid ${active ? C.accent : "transparent"}`,
                 borderRadius: 9,
-                padding: "7px 4px",
+                padding: "7px 2px",
                 color: active ? "#fff" : C.dim,
                 cursor: "pointer",
               }}
@@ -3702,10 +3770,12 @@ export function CabinPlanner() {
               <Glyph name={g} />
               <span
                 style={{
-                  fontSize: 9.5,
-                  letterSpacing: "0.06em",
+                  // shrinks on narrow phones so KALUSTEET/FURNITURE still fits its cell
+                  fontSize: "clamp(7.5px, 2.4vw, 9.5px)",
+                  letterSpacing: "0.02em",
                   textTransform: "uppercase",
                   fontWeight: 600,
+                  whiteSpace: "nowrap",
                 }}
               >
                 {l}
@@ -3727,6 +3797,38 @@ export function CabinPlanner() {
           />
         </ErrorBoundary>
       )}
+      <Sheet open={sheet === "more"} onClose={() => setSheet(null)} title={t("more")}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {moreTools.map(([k, g, l, desc]) => {
+            const on = isActive(k);
+            return (
+              <button
+                key={k}
+                onClick={() => activateTool(k)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  textAlign: "left",
+                  background: on ? C.accent : C.chrome,
+                  border: `1px solid ${on ? C.accent : C.line}`,
+                  borderRadius: 10,
+                  padding: "11px 12px",
+                  color: on ? "#fff" : C.text,
+                  cursor: "pointer",
+                  fontFamily: SANS,
+                }}
+              >
+                <Glyph name={g} />
+                <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>{l}</span>
+                  <span style={{ fontSize: 12, color: on ? "rgba(255,255,255,0.8)" : C.dim }}>{desc}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </Sheet>
       <Sheet open={sheet === "library"} onClose={() => setSheet(null)} title={t("library")}>
         {editShape !== null ? (
           <ShapeEditor
@@ -3755,7 +3857,8 @@ export function CabinPlanner() {
             >
               {t("newShape")}
             </Btn>
-            {[...new Set(library.map((d) => groupOf(d, lang)))].map((grp) => (
+            {/* hidden: another device's seed copies, kept for the plans that use them */}
+            {[...new Set(library.filter((d) => !d.hidden).map((d) => groupOf(d, lang)))].map((grp) => (
               <div
                 key={grp}
                 style={{
@@ -3765,8 +3868,21 @@ export function CabinPlanner() {
                 <Label
                   style={{
                     marginBottom: 7,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 7,
                   }}
                 >
+                  {/* the colour the plan and 3D give this group */}
+                  <span
+                    style={{
+                      width: 10,
+                      height: 10,
+                      borderRadius: 3,
+                      background:
+                        GROUP[(library.find((d) => groupOf(d, lang) === grp) || {}).groupKey] || GROUP.custom,
+                    }}
+                  />
                   {grp}
                 </Label>
                 <div
@@ -3777,7 +3893,7 @@ export function CabinPlanner() {
                   }}
                 >
                   {library
-                    .filter((d) => groupOf(d, lang) === grp)
+                    .filter((d) => !d.hidden && groupOf(d, lang) === grp)
                     .map((d) => {
                       const b = bbox(defOutline(d));
                       return (
@@ -3825,8 +3941,8 @@ export function CabinPlanner() {
                                       `${(p.x - b.x0) / Math.max(b.w, b.h)},${(p.y - b.y0) / Math.max(b.w, b.h)}`,
                                   )
                                   .join(" ")}
-                                fill={C.timberFill}
-                                stroke={C.timber}
+                                fill={tint(GROUP[d.groupKey] || GROUP.custom, 0.34)}
+                                stroke={shade(GROUP[d.groupKey] || GROUP.custom, 0.72)}
                                 strokeWidth={0.05}
                                 vectorEffect="non-scaling-stroke"
                               />
