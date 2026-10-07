@@ -4,15 +4,40 @@ import { ceilingCrossings, defaultCeiling, headroomFor, roomAt } from "../domain
 import { bbox, defOutline, distToSeg, itemPoly, itemPolyTest, pointInPoly, polyArea, polysIntersect, raySpan, rotP, wallPoly, wallPolyTest } from "../domain/geometry";
 import { seedLibrary } from "../domain/library";
 import { DEF_WALL_H, openHead, openSill } from "../domain/openings";
-import { interiorAngle, nearMultiple, rebuildRoomWalls, snapRoomVertex, withAutoWalls } from "../domain/rooms";
+import {
+  deleteRoomCorner,
+  insertRoomCorner,
+  interiorAngle,
+  nearMultiple,
+  rebuildRoomWalls,
+  snapRoomVertex,
+  withAutoWalls,
+} from "../domain/rooms";
 import { snapItemPos, snapPoint } from "../domain/snapping";
 import { b64ToBytes, buildPdf, download } from "../export/pdf";
 import { PAPERS, renderSheet } from "../export/sheet";
 import { groupOf, nameOf, tr } from "../i18n";
-import { KEY_INDEX, KEY_LIB, KEY_SET, backupAll, emptyDoc, kImg, kPlan, restoreAll, sDel, sGet, sSet } from "../storage";
+import {
+  KEY_INDEX,
+  KEY_LIB,
+  KEY_SET,
+  NS,
+  deletePlanData,
+  emptyDoc,
+  imageKeyOf,
+  kPlan,
+  newImageKey,
+  pruneImages,
+  restoreAll,
+  sGet,
+  sSet,
+  sSetNow,
+} from "../storage";
+import { downloadBackup } from "../export/backup";
 import { SectionView } from "./SectionView";
 import { ShapeEditor } from "./ShapeEditor";
 import { Btn, Label, NumField, Sheet } from "./atoms";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { Glyph } from "./glyphs";
 import { View3D } from "../view3d/View3D";
 
@@ -72,6 +97,13 @@ export function CabinPlanner() {
   const history = useRef([]);
   const ptrs = useRef(new Map());
   const gest = useRef(null);
+  const docRef = useRef(doc);
+  docRef.current = doc;
+  const indexRef = useRef(index);
+  indexRef.current = index;
+  const pending = useRef(null); // the plan waiting for its debounced write
+  const freshImg = useRef(null); // a picture just imported, in case storage could not keep it
+  const [confirmDel, setConfirmDel] = useState(null);
   const defs = useMemo(() => Object.fromEntries(library.map((d) => [d.id, d])), [library]);
 
   /* ---- load ---- */
@@ -90,42 +122,107 @@ export function CabinPlanner() {
       }
       const idx = (await sGet(KEY_INDEX)) || [];
       setIndex(idx);
+      pruneImages(); // nothing can undo back to them after a reload
       if (idx.length) {
         const d = await sGet(kPlan(idx[0].id));
-        if (d) {
-          setDoc(d);
-          if (d.image) {
-            const im = await sGet(kImg(d.id));
-            if (im) setImgSrc(im);
-          }
-        }
+        if (d) setDoc(d);
       }
       setReady(true);
     })();
   }, []);
 
-  /* ---- autosave ---- */
+  /* ---- autosave ----
+     Writes are debounced but never dropped. Switching plans, deleting the open
+     plan and hiding the page all flush the pending write first; the debounce
+     used to be cancelled instead, losing the last edits. The plan list is read
+     from storage at write time, not from memory: a stale copy put deleted
+     plans back, and another tab's new plans would drop out of the list. */
+  const flushSave = useCallback(() => {
+    const d = pending.current;
+    if (!d) return null;
+    pending.current = null;
+    const ok = sSetNow(kPlan(d.id), d);
+    let current = indexRef.current;
+    try {
+      const raw = JSON.parse(localStorage.getItem(NS + KEY_INDEX));
+      if (Array.isArray(raw)) current = raw;
+    } catch (e) {}
+    const nidx = [
+      {
+        id: d.id,
+        name: d.name,
+        updated: Date.now(),
+      },
+      ...current.filter((p) => p.id !== d.id),
+    ];
+    indexRef.current = nidx;
+    setIndex(nidx);
+    sSetNow(KEY_INDEX, nidx);
+    return ok;
+  }, []);
   useEffect(() => {
     if (!ready) return;
+    pending.current = doc;
     setSaveState("saving");
-    const t = setTimeout(async () => {
-      const ok = await sSet(kPlan(doc.id), doc);
-      const rest = index.filter((p) => p.id !== doc.id);
-      const nidx = [
-        {
-          id: doc.id,
-          name: doc.name,
-          updated: Date.now(),
-        },
-        ...rest,
-      ];
-      setIndex(nidx);
-      await sSet(KEY_INDEX, nidx);
-      setSaveState(ok ? "saved" : "error");
+    const t = setTimeout(() => {
+      const ok = flushSave();
+      setSaveState(ok === false ? "error" : "saved");
       setTimeout(() => setSaveState(""), 1400);
     }, 700);
     return () => clearTimeout(t);
-  }, [doc, ready]);
+  }, [doc, ready, flushSave]);
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "hidden") flushSave();
+    };
+    window.addEventListener("pagehide", flushSave);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("pagehide", flushSave);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [flushSave]);
+
+  /* The picture follows the plan, Undo included: it is looked up by the key
+     the plan records, so removing or replacing it and then undoing brings the
+     right pixels back. */
+  const imgKey = imageKeyOf(doc);
+  useEffect(() => {
+    let live = true;
+    if (!imgKey) setImgSrc(null);
+    else if (freshImg.current && freshImg.current.key === imgKey) setImgSrc(freshImg.current.src);
+    else sGet(imgKey).then((src) => live && setImgSrc(src));
+    return () => {
+      live = false;
+    };
+  }, [imgKey]);
+
+  useEffect(() => {
+    if (!confirmDel) return;
+    const tm = setTimeout(() => setConfirmDel(null), 3000);
+    return () => clearTimeout(tm);
+  }, [confirmDel]);
+
+  /* Every switch to another plan goes through here. The leaving plan's pending
+     edits are written first, and its undo history goes with it: kept, Undo
+     would write the old plan over the new one. Pictures it no longer shows can
+     be cleaned up once no history can bring them back. */
+  const openDoc = useCallback(
+    (d) => {
+      const leaving = docRef.current;
+      flushSave();
+      if (leaving && leaving.id !== d.id) pruneImages(leaving.id);
+      history.current = [];
+      setHistLen(0);
+      gest.current = null;
+      setSel(null);
+      setSelVert(null);
+      setDraft(null);
+      setGhost(null);
+      setDoc(d);
+    },
+    [flushSave],
+  );
   useEffect(() => {
     if (ready) sSet(KEY_LIB, library);
   }, [library, ready]);
@@ -177,6 +274,8 @@ export function CabinPlanner() {
     };
   }, []);
   const push = useCallback((d) => {
+    // commit pushes from inside a state updater, which React may run twice
+    if (history.current[history.current.length - 1] === d) return;
     history.current.push(d);
     if (history.current.length > 60) history.current.shift();
     setHistLen(history.current.length);
@@ -267,9 +366,10 @@ export function CabinPlanner() {
   useEffect(() => {
     if (fitReq) fitAll();
   }, [fitReq]);
+  const selRoomId = sel && sel.kind === "room" ? sel.id : null;
   useEffect(() => {
-    if (!sel || sel.kind !== "room") setSelVert(null);
-  }, [sel]);
+    setSelVert(null);
+  }, [selRoomId]);
 
   /* ---- hit testing ---- */
   const hitTest = useCallback(
@@ -465,30 +565,16 @@ export function CabinPlanner() {
           };
           if (Math.hypot(wp.x - m.x, wp.y - m.y) * vp.s < 17) {
             const idx = i + 1;
-            commit((prev) => {
-              const rooms = prev.rooms.map((r) =>
-                r.id === selRoom.id
-                  ? {
-                      ...r,
-                      points: [...r.points.slice(0, idx), m, ...r.points.slice(idx)],
-                    }
-                  : r,
-              );
-              return withAutoWalls(
-                {
-                  ...prev,
-                  rooms,
-                },
-                selRoom.id,
-              );
-            });
+            const next = insertRoomCorner(doc, selRoom.id, i, m);
+            commit(() => next); // one undo step for adding the corner and dragging it
             setSelVert(idx);
             setRoomTab("shape");
             gest.current = {
               type: "vertex",
               roomId: selRoom.id,
               index: idx,
-              snapshot: null,
+              snapshot: next,
+              recorded: true,
               start: p,
               t: now,
               maxD: 0,
@@ -676,33 +762,37 @@ export function CabinPlanner() {
       return;
     }
     if (g.type === "vertex") {
-      const room = doc.rooms.find((r) => r.id === g.roomId);
+      /* Rebuilt from the state at the start of the drag on every move: walls
+         clamp their openings to their length, and building on the live state
+         let a wall that was short for a moment shrink its doors for good. */
+      const base = g.snapshot || doc;
+      const room = base.rooms.find((r) => r.id === g.roomId);
       if (!room) return;
-      const sn = snapRoomVertex(toWorld(p.x, p.y), room.points, g.index, doc, grid, 18 / vp.s);
-      setDoc((prev) => {
-        const rooms = prev.rooms.map((r) =>
-          r.id === g.roomId
-            ? {
-                ...r,
-                points: r.points.map((q, k) =>
-                  k === g.index
-                    ? {
-                        x: sn.x,
-                        y: sn.y,
-                      }
-                    : q,
-                ),
-              }
-            : r,
-        );
-        return withAutoWalls(
+      const sn = snapRoomVertex(toWorld(p.x, p.y), room.points, g.index, base, grid, 18 / vp.s);
+      const rooms = base.rooms.map((r) =>
+        r.id === g.roomId
+          ? {
+              ...r,
+              points: r.points.map((q, k) =>
+                k === g.index
+                  ? {
+                      x: sn.x,
+                      y: sn.y,
+                    }
+                  : q,
+              ),
+            }
+          : r,
+      );
+      setDoc(
+        withAutoWalls(
           {
-            ...prev,
+            ...base,
             rooms,
           },
           g.roomId,
-        );
-      });
+        ),
+      );
       return;
     }
     if (g.type === "rotate") {
@@ -849,7 +939,8 @@ export function CabinPlanner() {
     if (
       (g.type === "drag" || g.type === "rotate" || g.type === "vertex") &&
       (g.maxD || 0) > 2 &&
-      g.snapshot
+      g.snapshot &&
+      !g.recorded
     )
       push(g.snapshot);
     const isTap = (g.maxD || 0) <= TAP_SLOP && Date.now() - g.t < 900;
@@ -1140,14 +1231,15 @@ export function CabinPlanner() {
         cv.height = Math.round(im.height * k);
         cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height);
         const url = cv.toDataURL("image/jpeg", 0.82);
-        setImgSrc(url);
-        sSet(kImg(doc.id), url).then((ok) => {
-          if (!ok) setHint(tr(lang, "quotaFull"));
-        });
+        /* a new key each time, so the picture it replaces stays for Undo */
+        const key = newImageKey(doc.id);
+        freshImg.current = { key, src: url };
+        if (!sSetNow(key, url)) setHint(tr(lang, "quotaFull"));
         const mmPerPx = 8000 / cv.width;
         commit((prev) => ({
           ...prev,
           image: {
+            key,
             natW: cv.width,
             natH: cv.height,
             mmPerPx,
@@ -2553,15 +2645,17 @@ export function CabinPlanner() {
         )}
       </div>
       {showSection && (
-        <SectionView
-          doc={doc}
-          defs={defs}
-          lang={lang}
-          room={sectionRoom}
-          atPos={sectionAt}
-          height={152}
-          t={t}
-        />
+        <ErrorBoundary lang={lang} onClose={() => setShowSection(false)}>
+          <SectionView
+            doc={doc}
+            defs={defs}
+            lang={lang}
+            room={sectionRoom}
+            atPos={sectionAt}
+            height={152}
+            t={t}
+          />
+        </ErrorBoundary>
       )}
       {sel && (
         <div
@@ -3071,6 +3165,9 @@ export function CabinPlanner() {
               const c = selRoom.ceiling || defaultCeiling();
               const pts = selRoom.points;
               const nP = pts.length;
+              /* selVert can still point past the end of a room just switched to: an
+                 effect resets it, but only after this render reads it */
+              const vi = selVert != null && selVert < nP ? selVert : null;
               const aw = selRoom.autoWalls;
               /* every room edit reruns the wall wrap, so walls follow the shape live */
               const upRoom = (fn) =>
@@ -3096,7 +3193,7 @@ export function CabinPlanner() {
                 upRoom((r) => ({
                   ...r,
                   points: r.points.map((q, k) =>
-                    k === selVert
+                    k === vi
                       ? {
                           x,
                           y,
@@ -3105,27 +3202,27 @@ export function CabinPlanner() {
                   ),
                 }));
               const setEdge = (which, L) => {
-                if (selVert == null || !(L > 0)) return;
-                const anchor = pts[(selVert + (which === "in" ? -1 : 1) + nP) % nP];
-                const cur = pts[selVert];
+                if (vi == null || !(L > 0)) return;
+                const anchor = pts[(vi + (which === "in" ? -1 : 1) + nP) % nP];
+                const cur = pts[vi];
                 const dx = cur.x - anchor.x,
                   dy = cur.y - anchor.y;
                 const d = Math.hypot(dx, dy) || 1;
                 moveVert(anchor.x + (dx / d) * L, anchor.y + (dy / d) * L);
               };
               const lenIn =
-                selVert == null
+                vi == null
                   ? 0
                   : Math.hypot(
-                      pts[selVert].x - pts[(selVert - 1 + nP) % nP].x,
-                      pts[selVert].y - pts[(selVert - 1 + nP) % nP].y,
+                      pts[vi].x - pts[(vi - 1 + nP) % nP].x,
+                      pts[vi].y - pts[(vi - 1 + nP) % nP].y,
                     );
               const lenOut =
-                selVert == null
+                vi == null
                   ? 0
                   : Math.hypot(
-                      pts[selVert].x - pts[(selVert + 1) % nP].x,
-                      pts[selVert].y - pts[(selVert + 1) % nP].y,
+                      pts[vi].x - pts[(vi + 1) % nP].x,
+                      pts[vi].y - pts[(vi + 1) % nP].y,
                     );
               return (
                 <React.Fragment>
@@ -3212,7 +3309,7 @@ export function CabinPlanner() {
                       >
                         {t("shapeHint")}
                       </div>
-                      {selVert != null && pts[selVert] && (
+                      {vi != null && pts[vi] && (
                         <React.Fragment>
                           <div
                             style={{
@@ -3227,18 +3324,18 @@ export function CabinPlanner() {
                                 fontWeight: 600,
                               }}
                             >
-                              {t("corner")} {selVert + 1} {t("of")} {nP}
+                              {t("corner")} {vi + 1} {t("of")} {nP}
                             </span>
                             <span
                               style={{
                                 fontFamily: MONO,
                                 fontSize: 11.5,
-                                color: nearMultiple(interiorAngle(pts, selVert), 45, 0.4)
+                                color: nearMultiple(interiorAngle(pts, vi), 45, 0.4)
                                   ? C.accent2
                                   : C.dim,
                               }}
                             >
-                              {t("cornerAngle")} {Math.round(interiorAngle(pts, selVert) * 10) / 10}
+                              {t("cornerAngle")} {Math.round(interiorAngle(pts, vi) * 10) / 10}
                               °
                             </span>
                             <Btn
@@ -3250,10 +3347,7 @@ export function CabinPlanner() {
                               }}
                               onClick={() => {
                                 if (nP <= 3) return;
-                                upRoom((r) => ({
-                                  ...r,
-                                  points: r.points.filter((_, k) => k !== selVert),
-                                }));
+                                commit((prev) => deleteRoomCorner(prev, selRoom.id, vi));
                                 setSelVert(null);
                               }}
                             >
@@ -3268,17 +3362,17 @@ export function CabinPlanner() {
                           >
                             <NumField
                               label="X"
-                              value={Math.round(pts[selVert].x)}
+                              value={Math.round(pts[vi].x)}
                               suffix="mm"
                               w="50%"
-                              onChange={(v) => moveVert(v, pts[selVert].y)}
+                              onChange={(v) => moveVert(v, pts[vi].y)}
                             />
                             <NumField
                               label="Y"
-                              value={Math.round(pts[selVert].y)}
+                              value={Math.round(pts[vi].y)}
                               suffix="mm"
                               w="50%"
-                              onChange={(v) => moveVert(pts[selVert].x, v)}
+                              onChange={(v) => moveVert(pts[vi].x, v)}
                             />
                           </div>
                           <div
@@ -3598,15 +3692,17 @@ export function CabinPlanner() {
         })}
       </div>
       {show3d && (
-        <View3D
-          doc={doc}
-          defs={defs}
-          lang={lang}
-          t={t}
-          onClose={() => setShow3d(false)}
-          invert={invert3d}
-          setInvert={setInvert3d}
-        />
+        <ErrorBoundary lang={lang} onClose={() => setShow3d(false)}>
+          <View3D
+            doc={doc}
+            defs={defs}
+            lang={lang}
+            t={t}
+            onClose={() => setShow3d(false)}
+            invert={invert3d}
+            setInvert={setInvert3d}
+          />
+        </ErrorBoundary>
       )}
       <Sheet open={sheet === "library"} onClose={() => setSheet(null)} title={t("library")}>
         {editShape !== null ? (
@@ -3855,8 +3951,6 @@ export function CabinPlanner() {
                       ...prev,
                       image: null,
                     }));
-                    setImgSrc(null);
-                    sDel(kImg(doc.id));
                     setSheet(null);
                   }}
                 >
@@ -4267,17 +4361,10 @@ export function CabinPlanner() {
                 >
                   <button
                     onClick={async () => {
+                      if (p.id === doc.id) return setSheet(null);
                       const d = await sGet(kPlan(p.id));
                       if (!d) return;
-                      history.current = [];
-                      setHistLen(0);
-                      setDoc(d);
-                      setSel(null);
-                      setImgSrc(null);
-                      if (d.image) {
-                        const im = await sGet(kImg(p.id));
-                        if (im) setImgSrc(im);
-                      }
+                      openDoc(d);
                       setSheet(null);
                       setFitReq((n) => n + 1);
                     }}
@@ -4298,27 +4385,39 @@ export function CabinPlanner() {
                   {index.length > 1 && (
                     <button
                       onClick={async () => {
-                        await sDel(kPlan(p.id));
-                        await sDel(kImg(p.id));
-                        const n = index.filter((q) => q.id !== p.id);
+                        /* the first tap arms, the second deletes: one stray tap
+                           on a phone must not cost a whole plan */
+                        if (confirmDel !== p.id) {
+                          setConfirmDel(p.id);
+                          return;
+                        }
+                        setConfirmDel(null);
+                        const isOpen = p.id === doc.id;
+                        if (isOpen) pending.current = null; // never write back the plan being deleted
+                        deletePlanData(p.id);
+                        const n = indexRef.current.filter((q) => q.id !== p.id);
+                        indexRef.current = n;
                         setIndex(n);
-                        await sSet(KEY_INDEX, n);
-                        if (p.id === doc.id && n.length) {
+                        sSetNow(KEY_INDEX, n);
+                        if (isOpen && n.length) {
                           const d = await sGet(kPlan(n[0].id));
-                          if (d) setDoc(d);
+                          if (d) {
+                            openDoc(d);
+                            setFitReq((k) => k + 1);
+                          }
                         }
                       }}
                       style={{
-                        background: "rgba(180,64,47,0.18)",
-                        border: `1px solid ${C.line}`,
+                        background: confirmDel === p.id ? C.bad : "rgba(180,64,47,0.18)",
+                        border: `1px solid ${confirmDel === p.id ? C.bad : C.line}`,
                         borderRadius: 8,
-                        color: "#F0A79A",
+                        color: confirmDel === p.id ? "#fff" : "#F0A79A",
                         padding: "8px 10px",
                         fontSize: 11,
                         cursor: "pointer",
                       }}
                     >
-                      Delete
+                      {confirmDel === p.id ? t("delPlanSure") : t("delPlan")}
                     </button>
                   )}
                 </div>
@@ -4328,11 +4427,7 @@ export function CabinPlanner() {
           <Btn
             wide={true}
             onClick={() => {
-              history.current = [];
-              setHistLen(0);
-              setDoc(emptyDoc(tr(lang, "newPlan").replace("+ ", "")));
-              setImgSrc(null);
-              setSel(null);
+              openDoc(emptyDoc(tr(lang, "newPlan").replace("+ ", "")));
               setSheet(null);
               setVp({
                 ox: size.w / 2,
@@ -4373,13 +4468,8 @@ export function CabinPlanner() {
                 wide={true}
                 small={true}
                 onClick={() => {
-                  const stamp = new Date().toISOString().slice(0, 10);
-                  download(
-                    new Blob([JSON.stringify(backupAll())], {
-                      type: "application/json",
-                    }),
-                    `mokkipohja-${stamp}.json`,
-                  );
+                  flushSave(); // the backup should include the last edits
+                  downloadBackup();
                 }}
               >
                 {t("backup")}
@@ -4409,11 +4499,12 @@ export function CabinPlanner() {
                     if (!f) return;
                     const fr = new FileReader();
                     fr.onload = () => {
+                      flushSave(); // local edits must be in storage to be kept
                       try {
                         restoreAll(JSON.parse(fr.result));
                         location.reload();
                       } catch (err) {
-                        setHint(tr(lang, "badBackup"));
+                        setHint(tr(lang, err && err.code === "quota" ? "restoreFull" : "badBackup"));
                         setSheet(null);
                       }
                     };
