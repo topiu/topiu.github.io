@@ -18,7 +18,8 @@ features.
   lack it, applied when the plan is read. Backup files from older versions must
   restore.
 - **Millimetres everywhere.** Plan coordinates are mm with y pointing down; the
-  screen scale is px per mm. Only the 3D view flips y.
+  screen scale is px per mm. Only the 3D view changes units and axes (metres,
+  y up, plan y as z).
 - **Every UI string in both languages.** Add a key to `STR.en` and `STR.fi` in
   `src/i18n.js`. A test fails if the two sets of keys differ.
 - **Logic goes in `src/domain/`,** which never imports React, with a test.
@@ -114,6 +115,36 @@ shared slope lifted the nearer eave above the eaves height. `ceilingAt` and
 size. Any extra margin rescales a sheet whose title block states a scale.
 
 **Use `??`, not `||`, for numbers that can be 0** (heights, offsets).
+
+## The 3D view
+
+- **three.js stays inside `src/view3d/`,** and the plan reaches it only
+  through `ui/View3DLoader.jsx`. One static import of `view3d/` or `three`
+  from plan code puts the whole library into the main bundle.
+- **The geometry decisions are domain code with tests:** which walls are drawn
+  (`wallPieces`: walls on the same line are merged, their openings shared),
+  how corners close (`pieceEnds`), roof heights past the walls
+  (`roofHeightAt`), where walking starts and what stops it (`walk.js`),
+  camera framing. `view3d/` only turns them into meshes. Walking uses the same
+  wall pieces the view draws, so a door you can see is a door you can walk
+  through.
+- **Models fill their footprint and stay under `hz`.** `tests/cabin.test.js`
+  checks every seed piece; only a tap may rise above a counter. A model faces
+  +z, which is plan +y; a piece with a front goes in `FACING` in
+  `domain/library.js`, which also draws its back edge on the plan.
+- **It draws on demand.** After changing anything shown, call
+  `stage.invalidate()`; pass `true` when what casts shadows changed (the model,
+  or what is shown or cut away), because the shadow map is not redrawn every
+  frame.
+- **Fog is mixed in after tone mapping,** in the output colour. So the sky
+  shader is not tone mapped: its horizon must come out exactly the fog colour,
+  or the ground meets the sky in a visible band.
+- **Close cleans up:** cabin geometry, then materials, then the renderer, with
+  `forceContextLoss`, so opening and closing 3D repeatedly does not leak
+  WebGL contexts.
+- **Look at it with WebGL on.** Headless Chromium renders WebGL with
+  `--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader`; it
+  is slow (a few frames a second), so wait a few seconds before a screenshot.
 
 ## Design rules
 
