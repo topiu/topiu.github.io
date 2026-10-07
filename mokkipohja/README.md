@@ -32,12 +32,16 @@ src/
     rooms.js       room outlines, automatic room walls, corner snapping
     ceilings.js    flat, gable and shed ceilings; headroom
     openings.js    door and window sill/head defaults
-    library.js     the seed furniture library
+    library.js     the seed furniture library; which way pieces face
+    labels.js      fitting names into outlines
+    plancheck.js   furniture overlaps and door swings
+    wallpieces.js  walls as solids: overlaps merged, corners mitred, roof heights
+    walk.js        walking in 3D: start point, wall collision, camera framing
   storage.js       localStorage keys, backup and restore
   i18n.js          every UI string, English and Finnish
   export/          sheet rendering (canvas) and the minimal PDF writer
   ui/              CabinPlanner (the app), SectionView, ShapeEditor, atoms, glyphs
-  view3d/          the 3D view
+  view3d/          the 3D view (three.js, loaded on its own; see below)
   main.jsx         mount
 tests/             vitest, one file per area
 tools/port/        the one-off port from the single file, kept as a record
@@ -77,7 +81,9 @@ Library pieces are `{ id, type: "rect" | "circle" | "poly", ... , hz }`. A seed
 piece has a `key` (its translation); a custom shape has a `name`. A piece
 restored from another device's backup may carry `hidden: true` (see below).
 
-Plan coordinates have y pointing down, as on screen. The 3D view flips y.
+Plan coordinates have y pointing down, as on screen. The 3D view works in
+metres with y up: plan x and y become its x and z, so seen from above the
+model lies exactly like the plan.
 
 **Old data must keep loading.** Plans saved by any earlier version must open
 unchanged, so key names never change and a new field always has a default for
@@ -94,6 +100,34 @@ string, and *Restore* reads the same format.
   `hidden` so the library doesn't list two sofas.
 - Restore is all or nothing: if storage fills up part-way, every key it wrote is
   put back.
+
+## 3D view
+
+The 3D view is built with three.js, which is most of the app's weight, so it
+is a chunk of its own (`ui/View3DLoader.jsx` is the only way in). The plan
+fetches it in the background once it has loaded, so 3D still opens at once.
+If the fetch fails, the view offers a reload.
+
+- **Orbit** opens framed to fit the screen, with the roof off and the outside
+  walls facing the camera cut down to their footprint, so you can see into the
+  rooms. With the roof on you see the cabin from outside.
+- **Walk** starts just inside the front door (the first door in a room's wall),
+  looking in. Drag to look, tap the floor to walk there, or use the stick
+  (touch) or WASD (keyboard). Walls stop you and doors let you through.
+- Walls are logs, with real holes for doors and windows, frames, glass and a
+  door leaf standing open towards its swing side. Two walls on the same line,
+  as two rooms' centred walls on a shared edge are, are drawn once, and an
+  opening in either goes through both. Corners are mitred.
+- Each room's roof follows its ceiling, overhangs the outside walls, and meets
+  the next room's roof halfway over a wall they share.
+- Seed furniture has models of its own, scaled to the piece and always within
+  its footprint and height. Custom shapes are their outline raised to their
+  height. Unrotated, a model faces plan +y (down the screen); the plan draws the
+  back edge of such pieces bold. A piece taller than the ceiling where it
+  stands is red.
+- Surfaces are drawn by code (`view3d/textures.js`); there are no image files.
+  Nothing is drawn unless something changed, and the sun's shadows are redrawn
+  only when what casts them changes, which keeps a phone cool.
 
 ## Deploy
 

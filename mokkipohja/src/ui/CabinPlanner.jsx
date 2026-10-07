@@ -4,7 +4,7 @@ import { fitLabel, labelRect, placeRoomLabel } from "../domain/labels";
 import { planConflicts } from "../domain/plancheck";
 import { ceilingCrossings, defaultCeiling, headroomFor, roomAt } from "../domain/ceilings";
 import { bbox, defOutline, distToSeg, itemPoly, itemPolyTest, pointInPoly, polyArea, polysIntersect, raySpan, rotP, wallPoly, wallPolyTest } from "../domain/geometry";
-import { seedLibrary } from "../domain/library";
+import { backEdges, seedLibrary } from "../domain/library";
 import { DEF_WALL_H, openHead, openSill } from "../domain/openings";
 import {
   deleteRoomCorner,
@@ -41,7 +41,7 @@ import { ShapeEditor } from "./ShapeEditor";
 import { Btn, Label, NumField, Sheet } from "./atoms";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { Glyph } from "./glyphs";
-import { View3D } from "../view3d/View3D";
+import { View3DLoader, prefetch3D } from "./View3DLoader";
 
 /* ============================================================
    Main app
@@ -207,6 +207,17 @@ export function CabinPlanner() {
     const tm = setTimeout(() => setConfirmDel(null), 3000);
     return () => clearTimeout(tm);
   }, [confirmDel]);
+
+  /* fetch the 3D view while nothing else is going on, so it opens at once */
+  useEffect(() => {
+    if (!ready) return undefined;
+    if (window.requestIdleCallback) {
+      const id = window.requestIdleCallback(prefetch3D, { timeout: 5000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = setTimeout(prefetch3D, 2000);
+    return () => clearTimeout(id);
+  }, [ready]);
 
   /* Every switch to another plan goes through here. The leaving plan's pending
      edits are written first, and its undo history goes with it: kept, Undo
@@ -2078,6 +2089,28 @@ export function CabinPlanner() {
                   stroke={isSel ? C.accent : bad ? C.bad : shade(gc, 0.72)}
                   strokeWidth={isSel ? 2.4 : 1.5}
                 />
+                {/* the back of a piece that faces one way, the side for the wall:
+                    in 3D it faces away from this edge */}
+                {backEdges(def).map(([a, b], i) => {
+                  const at = (p) => {
+                    const r = rotP(p, (it.rot || 0) * D2R);
+                    return S({ x: r.x + it.x, y: r.y + it.y });
+                  };
+                  const A = at(a),
+                    B = at(b);
+                  return (
+                    <line
+                      key={i}
+                      x1={A.x}
+                      y1={A.y}
+                      x2={B.x}
+                      y2={B.y}
+                      stroke={isSel ? C.accent : bad ? C.bad : shade(gc, 0.55)}
+                      strokeWidth={3.5}
+                      strokeLinecap="round"
+                    />
+                  );
+                })}
                 {isSel &&
                   (() => {
                     const hp = S(handleWorld(it, def));
@@ -3786,10 +3819,9 @@ export function CabinPlanner() {
       </div>
       {show3d && (
         <ErrorBoundary lang={lang} onClose={() => setShow3d(false)}>
-          <View3D
+          <View3DLoader
             doc={doc}
             defs={defs}
-            lang={lang}
             t={t}
             onClose={() => setShow3d(false)}
             invert={invert3d}

@@ -155,3 +155,81 @@ export const seedLibrary = () => {
     R("storage", 1000, 400, 1900, "store"),
   ];
 };
+
+/* Seed pieces that face one way, their back meant for a wall. Unrotated,
+   the 3D models face plan +y (down the screen), and the plan draws their back
+   edge bold, so a piece can be turned the right way round on the plan. */
+const FACING = new Set([
+  "bedDouble",
+  "bedSingle",
+  "bunk",
+  "wardrobe",
+  "sofa",
+  "armchair",
+  "chair",
+  "shelf",
+  "fireplace",
+  "stove",
+  "kitchen600",
+  "kitchen1200",
+  "sink",
+  "cooker",
+  "fridge",
+  "kiuas",
+  "wc",
+  "basin",
+  "storage",
+]);
+const CORNER_PIECES = new Set(["cornerSofa", "cornerTop", "laude"]);
+
+/* The seed's L shapes (corner sofa, corner counter, sauna bench): an arm
+   along the back edge and one down the left side. Returns the outer box and
+   the inner corner, in the piece's own mm, or null if the outline was edited
+   into anything else. */
+export function seedL(def) {
+  if (def.type !== "poly" || !def.points || def.points.length !== 6) return null;
+  const b = bbox(def.points);
+  const [p0, p1, p2, p3, p4, p5] = def.points;
+  const near = (a, v) => Math.abs(a - v) < 1;
+  const ok =
+    near(p0.x, b.x0) &&
+    near(p0.y, b.y0) &&
+    near(p1.x, b.x1) &&
+    near(p1.y, b.y0) &&
+    near(p2.x, b.x1) &&
+    near(p3.y, p2.y) &&
+    near(p4.x, p3.x) &&
+    near(p4.y, b.y1) &&
+    near(p5.x, b.x0) &&
+    near(p5.y, b.y1) &&
+    p3.x > b.x0 + 50 &&
+    p3.x < b.x1 - 50 &&
+    p3.y > b.y0 + 50 &&
+    p3.y < b.y1 - 50;
+  return ok ? { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1, ix: p3.x, iy: p3.y } : null;
+}
+
+/* the edges a piece's back runs along, in its own mm: [[a, b], ...] */
+export function backEdges(def) {
+  if (!def || !def.key) return [];
+  if (FACING.has(def.key) && def.type === "rect")
+    return [
+      [
+        { x: -def.w / 2, y: -def.h / 2 },
+        { x: def.w / 2, y: -def.h / 2 },
+      ],
+    ];
+  const L = CORNER_PIECES.has(def.key) && seedL(def);
+  if (!L)
+    return [];
+  return [
+    [
+      { x: L.x0, y: L.y1 },
+      { x: L.x0, y: L.y0 },
+    ],
+    [
+      { x: L.x0, y: L.y0 },
+      { x: L.x1, y: L.y0 },
+    ],
+  ];
+}
