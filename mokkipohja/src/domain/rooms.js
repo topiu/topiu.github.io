@@ -147,6 +147,84 @@ export const withAutoWalls = (doc, roomId) => {
   return r && r.autoWalls ? rebuildRoomWalls(doc, r) : doc;
 };
 
+const autoWallsOn = (room) => !!(room.autoWalls && room.autoWalls.mode && room.autoWalls.mode !== "none");
+
+/* Add a corner at point m on edge i, as corner i + 1.
+   Room walls follow their edges by index, so every later wall moves up one
+   index, keeping its doors and windows, and an opening on the split edge goes
+   to the half its centre is on. Inserting into the points alone would shift
+   every later edge's openings onto the next wall and drop the last edge's. */
+export function insertRoomCorner(doc, roomId, i, m) {
+  const room = doc.rooms.find((r) => r.id === roomId);
+  if (!room) return doc;
+  const pts = [...room.points.slice(0, i + 1), m, ...room.points.slice(i + 1)];
+  const next = { ...room, points: pts };
+  const rooms = doc.rooms.map((r) => (r.id === roomId ? next : r));
+  if (!autoWallsOn(room)) return { ...doc, rooms };
+
+  const split = doc.walls.find((w) => w.room === roomId && w.edge === i);
+  const half = { id: uid(), room: roomId, edge: i + 1 }; // rebuild gives it geometry
+  const walls = doc.walls.map((w) =>
+    w.room === roomId && w.edge > i ? { ...w, edge: w.edge + 1 } : w,
+  );
+  let openings = doc.openings;
+  if (split) {
+    const line = roomWallLines(next, room.autoWalls.t, room.autoWalls.mode);
+    const s = Math.hypot(line[i + 1].x - line[i].x, line[i + 1].y - line[i].y);
+    openings = openings.map((o) =>
+      o.wallId === split.id && o.off + o.w / 2 > s ? { ...o, wallId: half.id, off: o.off - s } : o,
+    );
+  }
+  return rebuildRoomWalls({ ...doc, rooms, walls: [...walls, half], openings }, next);
+}
+
+/* Delete corner v; the two edges meeting there become one.
+   The merged wall keeps the id of the edge before v, the wall after v goes,
+   and later walls move down one index. Every opening of the room stays where
+   it is in the room, projected onto its new wall: inside and outside walls
+   start at a mitred corner, and deleting a corner changes the mitre at its
+   neighbours, so keeping each opening's distance from its wall start would
+   slide the doors next to the deleted corner along their walls. */
+export function deleteRoomCorner(doc, roomId, v) {
+  const room = doc.rooms.find((r) => r.id === roomId);
+  if (!room || room.points.length <= 3) return doc;
+  const n = room.points.length;
+  const pts = room.points.filter((_, k) => k !== v);
+  const next = { ...room, points: pts };
+  const rooms = doc.rooms.map((r) => (r.id === roomId ? next : r));
+  if (!autoWallsOn(room)) return { ...doc, rooms };
+
+  const before = (v - 1 + n) % n;
+  const mine = doc.walls.filter((w) => w.room === roomId);
+  const wBefore = mine.find((w) => w.edge === before);
+  const wAfter = mine.find((w) => w.edge === v);
+  const newIndex = (k) => (k < v ? k : k - 1);
+  const merged = wBefore || { id: uid(), room: roomId, edge: before };
+  let walls = doc.walls
+    .filter((w) => !(wAfter && w.id === wAfter.id))
+    .map((w) => (w.room === roomId ? { ...w, edge: newIndex(w.edge) } : w));
+  if (!wBefore) walls = [...walls, { ...merged, edge: newIndex(before) }];
+
+  const line = roomWallLines(next, room.autoWalls.t, room.autoWalls.mode);
+  const edgeOf = new Map(walls.filter((w) => w.room === roomId).map((w) => [w.id, w.edge]));
+  const openings = doc.openings.map((o) => {
+    const w = mine.find((x) => x.id === o.wallId);
+    if (!w) return o; // not on this room's walls
+    const id = w === wAfter ? merged.id : w.id;
+    const e = edgeOf.get(id);
+    const a = line[e],
+      b = line[(e + 1) % line.length];
+    const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const wl = Math.hypot(w.x2 - w.x1, w.y2 - w.y1) || 1;
+    const t = (o.off + o.w / 2) / wl;
+    const cx = w.x1 + (w.x2 - w.x1) * t,
+      cy = w.y1 + (w.y2 - w.y1) * t;
+    const along = ((cx - a.x) * (b.x - a.x) + (cy - a.y) * (b.y - a.y)) / L;
+    return { ...o, wallId: id, off: along - o.w / 2 };
+  });
+  return rebuildRoomWalls({ ...doc, rooms, walls, openings }, next);
+}
+
 /* Snap a room corner. Angle candidates win over the plain grid, so corners
    settle onto 45° and 90° rather than near them. */
 export function snapRoomVertex(p, pts, i, doc, grid, tol) {
