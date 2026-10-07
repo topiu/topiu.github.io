@@ -244,7 +244,7 @@ export function buildScene(doc, defs, opts) {
       const def = defs[it.defId];
       if (!def) continue;
       const poly = itemPoly(it, def);
-      const hz = def.hz || 700;
+      const hz = def.hz ?? 700;
       const hr = headroomFor(it, def, doc);
       const base = hr && hz > hr.mm ? C3.bad : C3.grp[def.groupKey] || C3.grp.custom;
       for (let i = 0; i < poly.length; i++) {

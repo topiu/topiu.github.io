@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { C, D2R, MONO, SANS, TAP_SLOP, clamp, fmt, uid } from "../core";
+import { C, D2R, DRAG_SLOP, MONO, SANS, TAP_SLOP, clamp, fmt, uid } from "../core";
 import { ceilingCrossings, defaultCeiling, headroomFor, roomAt } from "../domain/ceilings";
 import { bbox, defOutline, distToSeg, itemPoly, itemPolyTest, pointInPoly, polyArea, polysIntersect, raySpan, rotP, wallPoly, wallPolyTest } from "../domain/geometry";
 import { seedLibrary } from "../domain/library";
@@ -476,7 +476,12 @@ export function CabinPlanner() {
     });
     if (ptrs.current.size === 2) {
       const [a, b] = [...ptrs.current.values()];
-      if (gest.current?.type === "drag" && gest.current.snapshot) setDoc(gest.current.snapshot);
+      /* a second finger means zoom: put back whatever the first finger was
+         moving. Only item, wall and opening drags used to be put back, so a
+         corner move or rotation kept its change but lost its undo step */
+      const g0 = gest.current;
+      if (g0 && g0.snapshot && (g0.type === "drag" || g0.type === "rotate" || g0.type === "vertex"))
+        setDoc(g0.snapshot);
       gest.current = {
         type: "pinch",
         d0: Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1),
@@ -761,6 +766,13 @@ export function CabinPlanner() {
       else setGhost(snapPoint(toWorld(p.x, p.y), doc, grid, 16 / vp.s, draft?.[draft.length - 1]));
       return;
     }
+    /* What was grabbed moves only once the press has gone past the slop. A tap
+       to select used to move things by the finger's wobble, and snap them onto
+       a nearby line, without an undo step. */
+    if ((g.type === "vertex" || g.type === "rotate" || g.type === "drag") && !g.live) {
+      if ((g.maxD || 0) <= DRAG_SLOP) return;
+      g.live = true;
+    }
     if (g.type === "vertex") {
       /* Rebuilt from the state at the start of the drag on every move: walls
          clamp their openings to their length, and building on the live state
@@ -938,7 +950,7 @@ export function CabinPlanner() {
     if (!g) return;
     if (
       (g.type === "drag" || g.type === "rotate" || g.type === "vertex") &&
-      (g.maxD || 0) > 2 &&
+      g.live &&
       g.snapshot &&
       !g.recorded
     )
@@ -1217,6 +1229,18 @@ export function CabinPlanner() {
     const p = local(e);
     zoomAt(p.x, p.y, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0022)));
   };
+  /* React registers wheel listeners as passive, where preventDefault does
+     nothing, so a trackpad pinch (ctrl+wheel) zoomed the whole page along with
+     the plan. A native listener can stop it. */
+  const onWheelRef = useRef(onWheel);
+  onWheelRef.current = onWheel;
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const h = (e) => onWheelRef.current(e);
+    el.addEventListener("wheel", h, { passive: false });
+    return () => el.removeEventListener("wheel", h);
+  }, []);
 
   /* ---- image import ---- */
   const importImage = (file) => {
@@ -1349,7 +1373,7 @@ export function CabinPlanner() {
     if (!selItem || !defs[selItem.defId]) return null;
     const r = headroomFor(selItem, defs[selItem.defId], doc);
     if (!r) return null;
-    const hz = defs[selItem.defId].hz || 0;
+    const hz = defs[selItem.defId].hz ?? 0;
     return {
       ...r,
       hz,
@@ -1679,7 +1703,6 @@ export function CabinPlanner() {
       <div
         ref={wrapRef}
         onPointerDown={onDown}
-        onWheel={onWheel}
         style={{
           position: "relative",
           flex: 1,

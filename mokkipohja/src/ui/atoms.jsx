@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { C, MONO, SANS } from "../core";
 
 /* ---------------- small UI atoms ---------------- */
@@ -43,11 +43,31 @@ export function Btn({ children, onClick, active, tone, wide, small, style }) {
     </button>
   );
 }
+/* A number field that commits when you are done, not on every keystroke.
+   Committing each keystroke let the parent clamp a half-typed number (typing
+   2600 into a field clamped to 800–8000 went 2 -> 800 -> 8006 -> 8000) and
+   then wrote the clamped value back into the box mid-typing. Worse, every
+   keystroke was an edit: a corner X field passed through "6" on its way to
+   6000 and rebuilt the room's walls 6 mm long, shrinking their doors. */
 export function NumField({ label, value, onChange, suffix, w }) {
   const [txt, setTxt] = useState(String(value ?? ""));
+  const [shown, setShown] = useState(0); // bumped after a commit to show what was stored
+  const dirty = useRef(false);
+  const latest = useRef({ txt, onChange });
+  latest.current = { txt, onChange };
   useEffect(() => {
-    setTxt(String(value ?? ""));
-  }, [value]);
+    if (!dirty.current) setTxt(String(value ?? ""));
+  }, [value, shown]);
+  const commit = () => {
+    if (!dirty.current) return;
+    dirty.current = false;
+    const v = parseFloat(latest.current.txt.replace(",", "."));
+    if (!isNaN(v)) latest.current.onChange(v);
+    setShown((n) => n + 1);
+  };
+  // React sends no blur for a field it removes mid-edit (selecting something
+  // else swaps the panel), so a removed field commits on its way out
+  useEffect(() => () => commit(), []);
   return (
     <div
       style={{
@@ -71,9 +91,12 @@ export function NumField({ label, value, onChange, suffix, w }) {
           value={txt}
           inputMode="decimal"
           onChange={(e) => {
+            dirty.current = true;
             setTxt(e.target.value);
-            const v = parseFloat(e.target.value.replace(",", "."));
-            if (!isNaN(v)) onChange(v);
+          }}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
           }}
           style={{
             width: "100%",
