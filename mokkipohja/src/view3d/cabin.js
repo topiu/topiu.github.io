@@ -12,6 +12,7 @@ import {
 } from "../domain/geometry";
 import { polySigned } from "../domain/rooms";
 import { ROOF_BUILDUP, onRoof, planRoofs } from "../domain/roofs";
+import { faceParts } from "../domain/wallfaces";
 import {
   pieceEnds,
   ridgeOf,
@@ -214,7 +215,8 @@ function buildWall(piece, e, doc, rooms, mats, centre) {
     .map(ridgeOf)
     .filter(Boolean);
 
-  // which faces look out: probe a little way off each face's middle
+  // which side looks out, for the joinery and for cutting the wall away:
+  // probe a little way off each face's middle (faceParts dresses the faces)
   const inside = (p) => rooms.some((r) => pointInPoly(p, r.points));
   const ext = { 1: !inside(P(L / 2, t2 + 300)), [-1]: !inside(P(L / 2, -t2 - 300)) };
 
@@ -265,22 +267,26 @@ function buildWall(piece, e, doc, rooms, mats, centre) {
         new THREE.Vector2(o.b, o.h),
         new THREE.Vector2(o.a, o.h),
       ]);
-    const tris = THREE.ShapeUtils.triangulateShape(contour, holes);
-    const all = [...contour, ...holes.flat()];
     const n = [s * nx, 0, s * ny];
-    const mi = ext[s] ? 1 : 0;
-    for (const [i, j, k] of tris) {
-      const [a, b, c] = [all[i], all[j], all[k]];
-      M.tri(
-        mi,
-        V(a.x, w, a.y),
-        V(b.x, w, b.y),
-        V(c.x, w, c.y),
-        n,
-        [a.x * MM, a.y * MM],
-        [b.x * MM, b.y * MM],
-        [c.x * MM, c.y * MM],
-      );
+    // dressed as inside wall where it faces a room, below that room's ceiling
+    for (const part of faceParts(piece, doc, s, contour, holes)) {
+      const outer = part.outer.map((p) => new THREE.Vector2(p.x, p.y));
+      const hs = part.holes.map((h) => h.map((p) => new THREE.Vector2(p.x, p.y)));
+      const tris = THREE.ShapeUtils.triangulateShape(outer, hs);
+      const all = [...outer, ...hs.flat()];
+      for (const [i, j, k] of tris) {
+        const [a, b, c] = [all[i], all[j], all[k]];
+        M.tri(
+          part.indoor ? 0 : 1,
+          V(a.x, w, a.y),
+          V(b.x, w, b.y),
+          V(c.x, w, c.y),
+          n,
+          [a.x * MM, a.y * MM],
+          [b.x * MM, b.y * MM],
+          [c.x * MM, c.y * MM],
+        );
+      }
     }
   }
 
