@@ -169,19 +169,38 @@ function subtract([a, b], cuts) {
 }
 
 /* Clamp openings to the wall, drop slivers, and merge any that overlap (two
-   rooms' doors in the same shared wall become one opening). */
+   rooms' doors in the same shared wall become one opening). A window that
+   runs into a door is cut back to the door instead: merged, the two became
+   one hole from the floor up, as wide as both. */
 function tidyOpenings(ops, L) {
-  const out = [];
-  for (const op of ops
+  const clean = ops
     .map((o) => ({ ...o, a: Math.max(0, o.a), b: Math.min(L, o.b) }))
-    .filter((o) => o.b - o.a >= 50 && o.head > o.sill)
-    .sort((p, q) => p.a - q.a)) {
+    .filter((o) => o.b - o.a >= 50 && o.head > o.sill);
+  const doors = clean.filter((o) => o.kind === "door");
+  const windows = clean
+    .filter((o) => o.kind !== "door")
+    .flatMap((o) =>
+      doors.reduce(
+        (parts, d) =>
+          parts.flatMap((w) =>
+            d.b <= w.a || d.a >= w.b
+              ? [w]
+              : [
+                  { ...w, b: d.a },
+                  { ...w, a: d.b },
+                ],
+          ),
+        [o],
+      ),
+    )
+    .filter((o) => o.b - o.a >= 50);
+  const out = [];
+  for (const op of [...doors, ...windows].sort((p, q) => p.a - q.a)) {
     const prev = out[out.length - 1];
     if (prev && op.a < prev.b) {
       prev.b = Math.max(prev.b, op.b);
       prev.sill = Math.min(prev.sill, op.sill);
       prev.head = Math.max(prev.head, op.head);
-      if (op.kind === "door") prev.kind = "door";
       prev.through = !!(prev.through && op.through); // a real opening keeps its joinery
     } else out.push({ ...op });
   }

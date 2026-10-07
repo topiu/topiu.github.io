@@ -61,6 +61,25 @@ describe("walls on the same line", () => {
     expect(wallPieces(d)[0].ops.map((o) => [o.a, o.b])).toEqual([[1000, 2000]]);
   });
 
+  it("cuts a window that runs into a door back to the door, not into one big hole", () => {
+    const d = plan({
+      walls: [W("A", 0, 0, 9000, 0)],
+      openings: [
+        { id: "d", wallId: "A", off: 3000, w: 800, kind: "door" },
+        { id: "w", wallId: "A", off: 3600, w: 1800, kind: "window" }, // 200 into the door
+        { id: "v", wallId: "A", off: 6000, w: 2400, kind: "window" },
+        { id: "e", wallId: "A", off: 7000, w: 800, kind: "door" }, // in the middle of that one
+      ],
+    });
+    expect(wallPieces(d)[0].ops.map((o) => [o.kind, o.a, o.b, o.sill])).toEqual([
+      ["door", 3000, 3800, 0],
+      ["window", 3800, 5400, 900],
+      ["window", 6000, 7000, 900],
+      ["door", 7000, 7800, 0],
+      ["window", 7800, 8400, 900],
+    ]);
+  });
+
   it("lets the walker through a door put in either of two coincident walls", () => {
     const d = plan({
       walls: [W("A", 0, 0, 4000, 0), W("B", 4000, 0, 0, 0)],
